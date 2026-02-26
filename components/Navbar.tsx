@@ -25,7 +25,7 @@ export default function Navbar() {
       }`}
     >
       <div className={`${theme.layout.container} flex h-20 items-center justify-between gap-4`}>
-        <Link href="/" aria-label="Go to homepage">
+        <Link href="/" aria-label="Go to homepage" className="pt-1.5">
           <BrandMark compact />
         </Link>
 
