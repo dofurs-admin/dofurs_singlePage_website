@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { navItems } from '@/lib/site-data';
+import { headerPageLinks, navItems } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
 import BrandMark from './BrandMark';
 
@@ -22,24 +22,31 @@ export default function Navbar() {
         scrolled ? 'bg-white/90 shadow-soft backdrop-blur-md' : 'bg-transparent'
       }`}
     >
-      <div className={`${theme.layout.container} flex h-20 items-center justify-between`}>
-        <Link href="#home" aria-label="Go to home section">
+      <div className={`${theme.layout.container} flex h-20 items-center justify-between gap-4`}>
+        <Link href="/" aria-label="Go to homepage">
           <BrandMark compact />
         </Link>
-        <nav aria-label="Main navigation" className="hidden gap-8 text-sm font-medium md:flex">
+
+        <nav aria-label="Main navigation" className="hidden gap-5 text-sm font-medium lg:flex">
           {navItems.map((item) => (
-            <a key={item.href} href={item.href} className="text-ink/80 transition hover:text-coral">
+            <Link key={item.href} href={item.href} className="text-ink/80 transition hover:text-coral">
               {item.label}
-            </a>
+            </Link>
+          ))}
+          {headerPageLinks.map((item) => (
+            <Link key={item.href} href={item.href} className="text-ink/80 transition hover:text-coral">
+              {item.label}
+            </Link>
           ))}
         </nav>
-        <a
-          href="#book"
+
+        <Link
+          href="/#book"
           className={`rounded-full px-5 py-2.5 text-sm font-semibold transition ${theme.colors.primary} ${theme.colors.primaryHover}`}
           aria-label="Jump to book a service section"
         >
           Book now
-        </a>
+        </Link>
       </div>
     </header>
   );

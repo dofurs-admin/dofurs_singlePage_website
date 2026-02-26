@@ -5,12 +5,12 @@ import { theme } from '@/lib/theme';
 
 export default function ProviderSection() {
   return (
-    <section id="providers" className="scroll-mt-24">
+    <section>
       <div className="relative h-[320px] w-full overflow-hidden md:h-[420px]">
         <Image src={imagery.fullWidth.src} alt={imagery.fullWidth.alt} fill sizes="100vw" className="object-cover object-center" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/35 via-black/15 to-transparent" aria-hidden="true" />
       </div>
-      <div className={`${theme.layout.container} -mt-14 pb-16 md:-mt-20 md:pb-24`}>
+      <div id="providers" className={`${theme.layout.container} scroll-mt-24 pt-8 pb-16 md:pt-10 md:pb-24`}>
         <FadeInSection>
           <div className="rounded-3xl bg-white p-8 shadow-soft md:p-12">
             <h2 className="text-3xl font-semibold tracking-tight text-ink md:text-4xl">Partner With Dofurs</h2>
