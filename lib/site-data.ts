@@ -80,12 +80,19 @@ export const imagery = {
 };
 
 export const links = {
-  booking:
-    'https://docs.google.com/forms/d/e/1FAIpQLScV2Ew_Bdo5ijIL-wYFeQn4Mf_em2U3UCX1QSWRAEh88bYcxA/viewform',
-  provider:
-    'https://docs.google.com/forms/d/e/1FAIpQLSenGg1wIlXDjsvRtFhStnMYTetVRXcB6zz-cz60Aa7nwSjXUw/viewform',
-  birthdayBooking: 'https://forms.gle/MFcqF4cgKFe5uwqS7',
+  booking: '/forms/customer-booking',
+  provider: '/forms/provider-application',
+  birthdayBooking: '/forms/birthday-booking',
 };
+
+export const formEmbeds = {
+  booking:
+    'https://docs.google.com/forms/d/e/1FAIpQLScV2Ew_Bdo5ijIL-wYFeQn4Mf_em2U3UCX1QSWRAEh88bYcxA/viewform?embedded=true',
+  provider:
+    'https://docs.google.com/forms/d/e/1FAIpQLSenGg1wIlXDjsvRtFhStnMYTetVRXcB6zz-cz60Aa7nwSjXUw/viewform?embedded=true',
+  birthdayBooking:
+    'https://docs.google.com/forms/d/e/1FAIpQLSeeaIrVbHFHbqO8I_BvSyE6cA7_Nu7YYdzY2Xr70UlU8S_gPg/viewform?embedded=true',
+} as const;
 
 export const reviews = [
   {

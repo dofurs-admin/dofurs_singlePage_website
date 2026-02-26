@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import Link from 'next/link';
 import FadeInSection from './FadeInSection';
 import { theme } from '@/lib/theme';
 import { links } from '@/lib/site-data';
@@ -8,12 +9,10 @@ export default function BirthdayBannerSection() {
     <section className="py-8 md:py-10">
       <div className={theme.layout.container}>
         <FadeInSection>
-          <a
+          <Link
             href={links.birthdayBooking}
-            target="_blank"
-            rel="noreferrer"
             className="relative mx-auto block max-w-5xl overflow-hidden rounded-3xl shadow-soft"
-            aria-label="Book pet birthday service in a new tab"
+            aria-label="Book pet birthday service"
           >
             <Image
               src="/Birthday/book-a-birthday-banner-2.png"
@@ -29,7 +28,7 @@ export default function BirthdayBannerSection() {
                 Book Birthday Celebration
               </span>
             </div>
-          </a>
+          </Link>
         </FadeInSection>
       </div>
     </section>

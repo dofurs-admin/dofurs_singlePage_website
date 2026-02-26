@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import Link from 'next/link';
 import FadeInSection from './FadeInSection';
 import { imagery, links } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
@@ -18,15 +19,13 @@ export default function ProviderSection() {
               Grow your pet care business with quality leads, reliable tools, and a platform built around trust.
               Join our network of verified service providers and connect with pet parents who value excellence.
             </p>
-            <a
+            <Link
               href={links.provider}
-              target="_blank"
-              rel="noreferrer"
               className={`mt-8 inline-flex rounded-full px-7 py-3 text-sm font-semibold transition ${theme.colors.primary} ${theme.colors.primaryHover}`}
-              aria-label="Apply as Service Provider in a new tab"
+              aria-label="Apply as Service Provider"
             >
               Apply as Service Provider
-            </a>
+            </Link>
           </div>
         </FadeInSection>
       </div>
