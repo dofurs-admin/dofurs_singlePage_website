@@ -45,7 +45,7 @@ export default function Footer() {
 
         <div>
           <p className="text-sm font-semibold text-ink">Follow</p>
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
           {socials.map((item) => {
             const Icon = item.icon;
             return (
