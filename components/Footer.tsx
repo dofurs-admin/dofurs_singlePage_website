@@ -1,13 +1,15 @@
-import { Instagram, Linkedin, Twitter } from 'lucide-react';
+import { Facebook, Instagram, Linkedin, Twitter, Youtube } from 'lucide-react';
 import Link from 'next/link';
 import BrandMark from './BrandMark';
 import { footerInfoLinks, footerPolicyLinks } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
 
 const socials = [
-  { icon: Instagram, href: '#', label: 'Instagram placeholder' },
-  { icon: Twitter, href: '#', label: 'Twitter placeholder' },
-  { icon: Linkedin, href: '#', label: 'LinkedIn placeholder' },
+  { icon: Twitter, href: 'https://x.com/dofurs', label: 'Twitter' },
+  { icon: Youtube, href: 'https://www.youtube.com/@dofurspetcare', label: 'YouTube' },
+  { icon: Linkedin, href: 'https://www.linkedin.com/company/dofurs-petcare/', label: 'LinkedIn' },
+  { icon: Instagram, href: 'https://www.instagram.com/dofurs.petcare/', label: 'Instagram' },
+  { icon: Facebook, href: 'https://www.facebook.com/profile.php?id=61568180277956', label: 'Facebook' },
 ];
 
 export default function Footer() {

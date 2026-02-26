@@ -1,17 +1,11 @@
 import { Bath, Dog, HeartHandshake, Stethoscope, CalendarCheck2, PawPrint, Smile } from 'lucide-react';
 
 export const navItems = [
-  { label: 'Services', href: '/#services' },
-  { label: 'How it Works', href: '/#how-it-works' },
-  { label: 'Book', href: '/#book' },
-  { label: 'Providers', href: '/#providers' },
 ] as const;
 
 export const headerPageLinks = [
   { label: 'About', href: '/about' },
-  { label: 'Contact Us', href: '/contact-us' },
   { label: 'FAQs', href: '/faqs' },
-  { label: 'Refer & Earn', href: '/refer-and-earn' },
   { label: 'Blog', href: '/blog' },
 ] as const;
 
