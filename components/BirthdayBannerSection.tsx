@@ -16,7 +16,7 @@ export default function BirthdayBannerSection() {
             aria-label="Book pet birthday service in a new tab"
           >
             <Image
-              src="/birthday/book-a-birthday-banner-2.png"
+              src="/Birthday/book-a-birthday-banner-2.png"
               alt="Book a pet birthday celebration banner"
               width={2000}
               height={900}
