@@ -1,13 +1,17 @@
 import { Bath, Dog, HeartHandshake, Stethoscope, CalendarCheck2, PawPrint, Smile } from 'lucide-react';
 
-export const navItems = [
-] as const;
+type NavItem = {
+  label: string;
+  href: string;
+};
 
-export const headerPageLinks = [
+export const navItems: NavItem[] = [];
+
+export const headerPageLinks: NavItem[] = [
   { label: 'About', href: '/about' },
   { label: 'FAQs', href: '/faqs' },
   { label: 'Blog', href: '/blog' },
-] as const;
+];
 
 export const footerInfoLinks = [
   { label: 'About', href: '/about' },
