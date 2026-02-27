@@ -24,19 +24,19 @@ export default function Navbar() {
         scrolled ? 'bg-white/90 shadow-soft backdrop-blur-md' : 'bg-transparent'
       }`}
     >
-      <div className={`${theme.layout.container} flex h-20 items-center justify-between gap-4`}>
-        <Link href="/" aria-label="Go to homepage" className="pt-1.5">
+      <div className={`${theme.layout.container} flex h-16 items-center justify-between gap-4`}>
+        <Link href="/" aria-label="Go to homepage" className="pt-1">
           <BrandMark compact />
         </Link>
 
-        <nav aria-label="Main navigation" className="hidden gap-5 text-sm font-medium lg:flex">
+        <nav aria-label="Main navigation" className="hidden gap-6 text-sm font-medium lg:flex">
           {navItems.map((item) => (
-            <Link key={item.href} href={item.href} className="text-ink/80 transition hover:text-coral">
+            <Link key={item.href} href={item.href} className="relative pb-1 text-ink/80 transition-all duration-300 hover:text-coral after:absolute after:bottom-[-2px] after:left-0 after:h-[2px] after:w-full after:origin-left after:scale-x-0 after:bg-coral after:transition-transform after:duration-300 hover:after:scale-x-100">
               {item.label}
             </Link>
           ))}
           {headerPageLinks.map((item) => (
-            <Link key={item.href} href={item.href} className="text-ink/80 transition hover:text-coral">
+            <Link key={item.href} href={item.href} className="relative pb-1 text-ink/80 transition-all duration-300 hover:text-coral after:absolute after:bottom-[-2px] after:left-0 after:h-[2px] after:w-full after:origin-left after:scale-x-0 after:bg-coral after:transition-transform after:duration-300 hover:after:scale-x-100">
               {item.label}
             </Link>
           ))}
@@ -54,9 +54,9 @@ export default function Navbar() {
         </button>
 
         <Link
-          href="/#book"
-          className={`hidden rounded-full px-5 py-2.5 text-sm font-semibold transition sm:inline-flex ${theme.colors.primary} ${theme.colors.primaryHover}`}
-          aria-label="Jump to book a service section"
+          href="/forms/customer-booking#start-your-booking"
+          className={`hidden rounded-full px-6 py-2.5 text-sm font-semibold transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-[0_10px_22px_rgba(227,154,93,0.35)] sm:inline-flex ${theme.colors.primary} ${theme.colors.primaryHover}`}
+          aria-label="Go to customer booking page"
         >
           Book now
         </Link>
@@ -79,9 +79,9 @@ export default function Navbar() {
               </Link>
             ))}
             <Link
-              href="/#book"
+              href="/forms/customer-booking#start-your-booking"
               className={`inline-flex w-full items-center justify-center rounded-full px-5 py-2.5 text-sm font-semibold transition ${theme.colors.primary} ${theme.colors.primaryHover}`}
-              aria-label="Jump to book a service section"
+              aria-label="Go to customer booking page"
               onClick={() => setMenuOpen(false)}
             >
               Book now

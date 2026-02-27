@@ -17,3 +17,20 @@ body {
 * {
   @apply selection:bg-coral/25;
 }
+
+@keyframes paw-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(-4px, -10px, 0);
+  }
+}
+
+.animate-paw-float {
+  animation-name: paw-float;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}

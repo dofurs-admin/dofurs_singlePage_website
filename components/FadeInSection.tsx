@@ -18,9 +18,9 @@ export default function FadeInSection({ children, delay = 0, className }: FadeIn
     <motion.div
       ref={ref}
       className={className}
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 18 }}
       animate={inView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.6, ease: 'easeOut', delay }}
+      transition={{ duration: 0.5, ease: 'easeOut', delay }}
     >
       {children}
     </motion.div>

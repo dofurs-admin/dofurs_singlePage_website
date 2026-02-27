@@ -30,7 +30,7 @@ export default function FaqsPage() {
     <ContentPageLayout
       title="Frequently Asked Questions"
       description="Everything you need to know about bookings, providers, and pet care support on Dofurs."
-      heroImageSrc="/Birthday/faq-page.webp"
+      heroImageSrc="/Birthday/faqs_new.png"
       heroImageAlt="Frequently asked questions"
       heroImageFirstOnMobile
     >

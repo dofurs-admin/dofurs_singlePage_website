@@ -97,17 +97,17 @@ export const formEmbeds = {
 export const reviews = [
   {
     quote: 'Booked grooming and sitting in one flow. Clear updates and a calm, happy pup at pickup.',
-    name: 'Riya M.',
+    name: 'Rajesh Patra',
     role: 'Pet Parent',
   },
   {
     quote: 'The provider was punctual, gentle, and professional. The booking experience felt truly seamless.',
-    name: 'Arjun K.',
+    name: 'Anupam P',
     role: 'Dog Owner',
   },
   {
     quote: 'Fast confirmation, transparent details, and excellent care quality. Dofurs made life easier.',
-    name: 'Sneha P.',
+    name: 'M Saiba',
     role: 'Cat Parent',
   },
 ] as const;

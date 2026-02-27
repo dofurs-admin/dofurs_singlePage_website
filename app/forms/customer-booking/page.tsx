@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import ContentPageLayout from '@/components/ContentPageLayout';
 import { formEmbeds } from '@/lib/site-data';
+import FadeInSection from '@/components/FadeInSection';
 
 export default function CustomerBookingFormPage() {
   return (
@@ -11,7 +12,7 @@ export default function CustomerBookingFormPage() {
       heroImageAlt="Book pet care with Dofurs"
       heroImageFirstOnMobile
     >
-      <div className="rounded-2xl border border-[#f2dfcf] bg-[linear-gradient(135deg,_#fdf8f4_0%,_#f6efe9_100%)] p-6 text-center shadow-soft md:p-8">
+      <div id="start-your-booking" className="rounded-3xl border border-[#f2dfcf] bg-[linear-gradient(135deg,_#fdf8f4_0%,_#f6efe9_100%)] p-6 text-center shadow-soft-md md:p-8">
         <h2 className="text-2xl font-semibold text-ink md:text-3xl">Start Your Booking</h2>
         <p className="mx-auto mt-3 max-w-2xl text-[#6b6b6b]">
           Complete the booking form below and our team will help you schedule the best service for your pet.
@@ -19,7 +20,7 @@ export default function CustomerBookingFormPage() {
         <div className="mt-6 flex flex-col items-center gap-4">
           <Link
             href="#booking-form"
-            className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-8 py-3.5 text-sm font-semibold text-white shadow-sm transition duration-300 ease-out hover:scale-[1.03] hover:brightness-95 sm:w-auto"
+            className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-9 py-3.5 text-sm font-semibold text-white shadow-soft-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:brightness-95 hover:shadow-[0_14px_30px_rgba(227,154,93,0.32)] sm:w-auto"
           >
             Book Now
           </Link>
@@ -27,14 +28,17 @@ export default function CustomerBookingFormPage() {
         </div>
       </div>
 
-      <div id="booking-form" className="overflow-hidden rounded-2xl border border-[#f2dfcf] bg-white shadow-soft">
-        <iframe
-          src={formEmbeds.booking}
-          title="Customer Booking Form"
-          className="h-[1250px] w-full"
-          loading="lazy"
-        />
-      </div>
+      <FadeInSection delay={0.08}>
+        <div id="booking-form" className="overflow-hidden rounded-3xl border border-[#f2dfcf] bg-white shadow-soft-md">
+          <div className="h-1.5 w-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)]" aria-hidden="true" />
+          <iframe
+            src={formEmbeds.booking}
+            title="Customer Booking Form"
+            className="h-[1250px] w-full"
+            loading="lazy"
+          />
+        </div>
+      </FadeInSection>
     </ContentPageLayout>
   );
 }

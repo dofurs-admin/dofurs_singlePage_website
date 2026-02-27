@@ -17,7 +17,10 @@ const config: Config = {
         ink: '#1f1f1f',
       },
       boxShadow: {
+        'soft-sm': '0 10px 22px -16px rgba(0, 0, 0, 0.22)',
         soft: '0 12px 30px -18px rgba(0, 0, 0, 0.25)',
+        'soft-md': '0 18px 42px -22px rgba(0, 0, 0, 0.20)',
+        'soft-lg': '0 28px 64px -30px rgba(0, 0, 0, 0.20)',
       },
       borderRadius: {
         xl2: '1.25rem',

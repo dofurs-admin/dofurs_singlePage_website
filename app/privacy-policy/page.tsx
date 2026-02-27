@@ -5,7 +5,7 @@ export default function PrivacyPolicyPage() {
     <ContentPageLayout
       title="Privacy Policy"
       description="How Dofurs collects, uses, shares, and safeguards your personal information."
-      heroImageSrc="/Birthday/birthday-logo-circular.png"
+      heroImageSrc="/Birthday/privacy_new.png"
       heroImageAlt="Privacy and trust"
     >
       <p>Effective Date: 26 February 2025</p>
@@ -66,7 +66,7 @@ export default function PrivacyPolicyPage() {
       <ul className="list-disc space-y-2 pl-6">
         <li>Access, correction, deletion, and consent withdrawal rights.</li>
         <li>Right to opt out of marketing communications.</li>
-        <li>Requests can be sent to support@dofurs.com (response within 30 days).</li>
+        <li>Requests can be sent to petcare@dofurs.in (response within 30 days).</li>
       </ul>
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">8. Additional Provisions</h2>
@@ -78,8 +78,8 @@ export default function PrivacyPolicyPage() {
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">9. Grievance Officer & Contact</h2>
       <p>Company: Dofurs</p>
-      <p>Email: support@dofurs.com</p>
-      <p>Location: Bengaluru, Karnataka, India</p>
+      <p>Email: petcare@dofurs.in</p>
+      <p>Location: Dofurs, Neotown Road, Electronic City Phase 1, Bengaluru, Karnataka 560100</p>
       <p>
         Grievance complaints are acknowledged within 24 hours and targeted for resolution within 30 days. This policy is
         governed by Indian law, with courts in Bengaluru, Karnataka having jurisdiction.

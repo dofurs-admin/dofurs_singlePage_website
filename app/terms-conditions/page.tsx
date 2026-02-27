@@ -5,7 +5,7 @@ export default function TermsConditionsPage() {
     <ContentPageLayout
       title="Terms & Conditions"
       description="Legally binding terms governing access to and use of the Dofurs platform and services."
-      heroImageSrc="/Birthday/Birthday_logo.png"
+      heroImageSrc="/Birthday/terms%20%26%20conditions%20_new.png"
       heroImageAlt="Terms and conditions"
     >
       <div className="mx-auto w-full max-w-3xl">
@@ -67,13 +67,13 @@ export default function TermsConditionsPage() {
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">8. Disputes, Governing Law, and Contact</h2>
       <p>
-        Disputes should first be raised at support@dofurs.com for internal resolution. Unresolved disputes fall under the
+        Disputes should first be raised at petcare@dofurs.in for internal resolution. Unresolved disputes fall under the
         exclusive jurisdiction of courts in Bengaluru, Karnataka, India. These Terms are governed by applicable laws of
         India.
       </p>
-      <p>Email: support@dofurs.com</p>
+      <p>Email: petcare@dofurs.in</p>
       <p>Company: Dofurs</p>
-      <p>Address: Bengaluru, Karnataka, India</p>
+      <p>Address: Dofurs, Neotown Road, Electronic City Phase 1, Bengaluru, Karnataka 560100</p>
       </div>
     </ContentPageLayout>
   );

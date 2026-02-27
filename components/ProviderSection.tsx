@@ -6,7 +6,7 @@ import { links } from '@/lib/site-data';
 
 export default function ProviderSection() {
   return (
-    <section id="providers" className="scroll-mt-24 py-20">
+    <section id="providers" className="scroll-mt-24 bg-[#f8f5f2] py-20">
       <div className="mx-auto w-full max-w-[1200px] px-4 sm:px-6 lg:px-8">
         <FadeInSection>
           <div className="relative overflow-hidden rounded-3xl bg-[linear-gradient(135deg,_#fdf8f4_0%,_#f6efe9_100%)] px-6 py-10 shadow-soft sm:px-8 md:px-10 md:py-12 lg:px-14 lg:py-14">
@@ -45,7 +45,7 @@ export default function ProviderSection() {
                 <div className="mt-8 flex flex-col items-center gap-4 lg:items-start">
                   <Link
                     href={links.provider}
-                    className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-8 py-3.5 text-sm font-semibold text-white shadow-sm transition duration-300 ease-out hover:scale-[1.02] hover:brightness-95 sm:w-auto"
+                    className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-8 py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(227,154,93,0.35)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:brightness-95 hover:shadow-[0_14px_30px_rgba(227,154,93,0.42)] sm:w-auto"
                     aria-label="Apply as Service Provider"
                   >
                     Apply as Service Provider

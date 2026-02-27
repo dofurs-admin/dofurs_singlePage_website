@@ -5,7 +5,7 @@ export default function RefundCancellationPolicyPage() {
     <ContentPageLayout
       title="Refund & Cancellation Policy"
       description="Policy governing booking cancellation, refund eligibility, timelines, and quality-related disputes."
-      heroImageSrc="/Birthday/book-a-service.png"
+      heroImageSrc="/Birthday/refund%20%26%20cancelation%20_new.png"
       heroImageAlt="Refund and cancellation policy"
     >
       <h2 className="mt-2 text-2xl font-semibold text-ink">6.1 Cancellation by User</h2>
@@ -43,7 +43,7 @@ export default function RefundCancellationPolicyPage() {
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">6.4 Dispute Over Service Quality</h2>
       <p>
-        If dissatisfied with a completed service, users must report to support@dofurs.com within 24 hours with details.
+        If dissatisfied with a completed service, users must report to petcare@dofurs.in within 24 hours with details.
         After review, Dofurs may offer a partial refund, complimentary re-service, or platform credits at its sole
         discretion.
       </p>
