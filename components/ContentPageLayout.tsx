@@ -2,7 +2,6 @@ import Navbar from './Navbar';
 import Footer from './Footer';
 import Image from 'next/image';
 import { PawPrint } from 'lucide-react';
-import { theme } from '@/lib/theme';
 
 type ContentPageLayoutProps = {
   title: string;
