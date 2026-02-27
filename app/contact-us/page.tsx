@@ -7,6 +7,8 @@ export default function ContactUsPage() {
     <ContentPageLayout
       title="Contact Us"
       description="Have a question, feedback, or partnership request? We are here to help."
+      heroImageSrc="/Birthday/contact-us.webp"
+      heroImageAlt="Contact Dofurs"
     >
       <p>Email: hello@dofurs.com</p>
       <p>Support Hours: Monday to Saturday, 9:00 AM - 7:00 PM</p>

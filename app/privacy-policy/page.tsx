@@ -5,6 +5,8 @@ export default function PrivacyPolicyPage() {
     <ContentPageLayout
       title="Privacy Policy"
       description="How Dofurs collects, uses, shares, and safeguards your personal information."
+      heroImageSrc="/Birthday/birthday-logo-circular.png"
+      heroImageAlt="Privacy and trust"
     >
       <p>Effective Date: 26 February 2025</p>
       <p>Last Updated: 26 February 2025</p>

@@ -6,6 +6,9 @@ export default function BirthdayBookingFormPage() {
     <ContentPageLayout
       title="Birthday Booking Form"
       description="Plan your pet’s birthday celebration by submitting this quick booking form."
+      heroImageSrc="/Birthday/pet-birthday.png"
+      heroImageAlt="Pet birthday celebration booking"
+      heroImageFirstOnMobile
     >
       <div className="overflow-hidden rounded-2xl border border-[#f2dfcf] bg-white shadow-soft">
         <iframe

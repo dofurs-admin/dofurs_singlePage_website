@@ -20,6 +20,8 @@ export default function BlogPage() {
     <ContentPageLayout
       title="Blog"
       description="Expert guides, care tips, and practical advice for healthier, happier pets."
+      heroImageSrc="/Birthday/faq-page.webp"
+      heroImageAlt="Dofurs blog"
     >
       {posts.map((post) => (
         <article key={post.title} className="rounded-2xl border border-[#f1e6da] bg-white p-6 shadow-soft">

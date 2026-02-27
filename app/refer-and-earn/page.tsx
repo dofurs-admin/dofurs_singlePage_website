@@ -5,6 +5,8 @@ export default function ReferAndEarnPage() {
     <ContentPageLayout
       title="Refer & Earn"
       description="Invite pet parents and providers to Dofurs and unlock rewards as our community grows."
+      heroImageSrc="/Birthday/partners-with-dofurs.png"
+      heroImageAlt="Refer and earn with Dofurs"
     >
       <div className="rounded-3xl border border-[#f1e6da] bg-white p-7 shadow-soft">
         <h2 className="text-2xl font-semibold text-ink">How it works</h2>

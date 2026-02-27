@@ -5,7 +5,10 @@ export default function TermsConditionsPage() {
     <ContentPageLayout
       title="Terms & Conditions"
       description="Legally binding terms governing access to and use of the Dofurs platform and services."
+      heroImageSrc="/Birthday/Birthday_logo.png"
+      heroImageAlt="Terms and conditions"
     >
+      <div className="mx-auto w-full max-w-3xl">
       <p>Effective Date: 26 February 2025</p>
       <p>Last Updated: 26 February 2025</p>
 
@@ -71,6 +74,7 @@ export default function TermsConditionsPage() {
       <p>Email: support@dofurs.com</p>
       <p>Company: Dofurs</p>
       <p>Address: Bengaluru, Karnataka, India</p>
+      </div>
     </ContentPageLayout>
   );
 }

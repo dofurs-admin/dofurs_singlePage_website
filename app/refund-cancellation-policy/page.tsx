@@ -5,6 +5,8 @@ export default function RefundCancellationPolicyPage() {
     <ContentPageLayout
       title="Refund & Cancellation Policy"
       description="Policy governing booking cancellation, refund eligibility, timelines, and quality-related disputes."
+      heroImageSrc="/Birthday/book-a-service.png"
+      heroImageAlt="Refund and cancellation policy"
     >
       <h2 className="mt-2 text-2xl font-semibold text-ink">6.1 Cancellation by User</h2>
       <p>Users may cancel a confirmed booking through the platform or by contacting support.</p>

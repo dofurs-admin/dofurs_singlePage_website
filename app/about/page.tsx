@@ -1,12 +1,39 @@
 import ContentPageLayout from '@/components/ContentPageLayout';
+import { BadgeCheck, Home, ShieldCheck } from 'lucide-react';
 
 export default function AboutPage() {
   return (
     <ContentPageLayout
-      title="About Us"
-      description="Premium pet services, simplified. Built in Bengaluru for pet parents who want trusted, high-quality care."
+      title="About Dofurs"
+      description="Premium pet care, simplified for modern pet parents. Trusted, transparent, and built with a pet-first mindset."
+      heroImageSrc="/Birthday/dofurs-about-us.webp"
+      heroImageAlt="About Dofurs"
     >
       <p>Bengaluru, India • dofurs.in • support@dofurs.com</p>
+
+      <h2 className="mt-6 text-center text-2xl font-semibold text-ink">Our Mission</h2>
+      <p className="mx-auto max-w-3xl text-center text-[#6b6b6b]">
+        We are building India’s most trusted pet care platform where every pet parent can discover verified professionals,
+        book confidently, and receive dependable support.
+      </p>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border border-[#f1e6da] bg-white p-5 shadow-soft">
+          <ShieldCheck className="h-7 w-7 text-coral" aria-hidden="true" />
+          <h3 className="mt-3 text-lg font-semibold text-ink">Certified Groomers</h3>
+          <p className="mt-2 text-sm text-[#6b6b6b]">Verified professionals with quality and hygiene standards.</p>
+        </div>
+        <div className="rounded-2xl border border-[#f1e6da] bg-white p-5 shadow-soft">
+          <Home className="h-7 w-7 text-coral" aria-hidden="true" />
+          <h3 className="mt-3 text-lg font-semibold text-ink">Doorstep Service</h3>
+          <p className="mt-2 text-sm text-[#6b6b6b]">Comfort-first care at home for stress-free pet experiences.</p>
+        </div>
+        <div className="rounded-2xl border border-[#f1e6da] bg-white p-5 shadow-soft">
+          <BadgeCheck className="h-7 w-7 text-coral" aria-hidden="true" />
+          <h3 className="mt-3 text-lg font-semibold text-ink">Trusted Locally</h3>
+          <p className="mt-2 text-sm text-[#6b6b6b]">Loved by pet parents across Bengaluru for consistent quality.</p>
+        </div>
+      </div>
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">Who We Are</h2>
       <p>
