@@ -1,19 +1,19 @@
-import Image from 'next/image';
 import FadeInSection from './FadeInSection';
-import { imagery } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
 
 export default function HeroSection() {
   return (
     <section id="home" className="relative min-h-screen scroll-mt-24 overflow-hidden pt-24" aria-label="Hero section">
-      <Image
-        src={imagery.hero.src}
-        alt={imagery.hero.alt}
-        fill
-        priority
-        sizes="100vw"
-        className="object-cover object-center"
-      />
+      <video
+        className="absolute inset-0 h-full w-full object-cover object-center"
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      >
+        <source src="/Birthday/dofurs.cover.video.mp4" type="video/mp4" />
+      </video>
       <div className="absolute inset-0 bg-hero-overlay" aria-hidden="true" />
       <div className={`relative ${theme.layout.container} flex min-h-[calc(100vh-6rem)] items-center`}>
         <FadeInSection className="max-w-2xl rounded-3xl bg-white/70 p-8 shadow-soft backdrop-blur-sm md:p-10">

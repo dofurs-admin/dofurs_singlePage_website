@@ -1,31 +1,60 @@
 import Image from 'next/image';
 import Link from 'next/link';
+import { PawPrint } from 'lucide-react';
 import FadeInSection from './FadeInSection';
-import { imagery, links } from '@/lib/site-data';
-import { theme } from '@/lib/theme';
+import { links } from '@/lib/site-data';
 
 export default function ProviderSection() {
   return (
-    <section>
-      <div className="relative h-[320px] w-full overflow-hidden md:h-[420px]">
-        <Image src={imagery.fullWidth.src} alt={imagery.fullWidth.alt} fill sizes="100vw" className="object-cover object-center" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/35 via-black/15 to-transparent" aria-hidden="true" />
-      </div>
-      <div id="providers" className={`${theme.layout.container} scroll-mt-24 pt-8 pb-16 md:pt-10 md:pb-24`}>
+    <section id="providers" className="scroll-mt-24 py-20">
+      <div className="mx-auto w-full max-w-[1200px] px-4 sm:px-6 lg:px-8">
         <FadeInSection>
-          <div className="rounded-3xl bg-white p-8 shadow-soft md:p-12">
-            <h2 className="text-3xl font-semibold tracking-tight text-ink md:text-4xl">Partner With Dofurs</h2>
-            <p className="mt-4 max-w-3xl text-ink/75">
-              Grow your pet care business with quality leads, reliable tools, and a platform built around trust.
-              Join our network of verified service providers and connect with pet parents who value excellence.
-            </p>
-            <Link
-              href={links.provider}
-              className={`mt-8 inline-flex rounded-full px-7 py-3 text-sm font-semibold transition ${theme.colors.primary} ${theme.colors.primaryHover}`}
-              aria-label="Apply as Service Provider"
-            >
-              Apply as Service Provider
-            </Link>
+          <div className="relative overflow-hidden rounded-3xl bg-[linear-gradient(135deg,_#fdf8f4_0%,_#f6efe9_100%)] px-6 py-10 shadow-soft sm:px-8 md:px-10 md:py-12 lg:px-14 lg:py-14">
+            <PawPrint className="absolute left-8 top-8 h-7 w-7 text-[#e9c7ad]/25" aria-hidden="true" />
+            <PawPrint className="absolute right-10 top-14 h-6 w-6 rotate-12 text-[#e9c7ad]/20" aria-hidden="true" />
+            <PawPrint className="absolute bottom-10 right-1/3 h-6 w-6 -rotate-12 text-[#e9c7ad]/20" aria-hidden="true" />
+
+            <div className="relative z-10 grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
+              <div className="relative mx-auto w-full max-w-xl">
+                <div className="group relative aspect-[4/3] overflow-hidden rounded-[20px] shadow-xl">
+                  <Image
+                    src="/Birthday/partners%20with%20dofurs.png"
+                    alt="Partner with Dofurs"
+                    fill
+                    sizes="(max-width: 1024px) 100vw, 50vw"
+                    className="object-cover object-[center_36%] transition duration-300 ease-out group-hover:scale-[1.02]"
+                    priority
+                  />
+                  <div
+                    className="absolute inset-0 bg-gradient-to-l from-[#f6efe9]/70 via-[#f6efe9]/20 to-transparent"
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
+
+              <div className="text-center lg:text-left">
+                <h2 className="text-[30px] font-bold tracking-tight text-[#1f1f1f] sm:text-4xl lg:text-5xl">
+                  Partner With Dofurs
+                </h2>
+
+                <p className="mx-auto mt-4 max-w-[520px] text-base leading-relaxed text-[#6b6b6b] sm:text-lg lg:mx-0">
+                  Grow your pet care business with quality leads, reliable tools, and a platform built around trust. Join
+                  our network of verified service providers and connect with pet parents who value excellence.
+                </p>
+
+                <div className="mt-8 flex flex-col items-center gap-4 lg:items-start">
+                  <Link
+                    href={links.provider}
+                    className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-8 py-3.5 text-sm font-semibold text-white shadow-sm transition duration-300 ease-out hover:scale-[1.02] hover:brightness-95 sm:w-auto"
+                    aria-label="Apply as Service Provider"
+                  >
+                    Apply as Service Provider
+                  </Link>
+
+                  <p className="text-sm text-[#7a7a7a]">Trusted by 200+ verified service professionals</p>
+                </div>
+              </div>
+            </div>
           </div>
         </FadeInSection>
       </div>
