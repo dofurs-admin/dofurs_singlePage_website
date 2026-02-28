@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Script from 'next/script';
 import './globals.css';
 import WhatsAppFloatingButton from '@/components/WhatsAppFloatingButton';
+import AppProviders from '@/components/ui/AppProviders';
 
 export const metadata: Metadata = {
   title: 'Dofurs | Premium Pet Services, Simplified',
@@ -44,8 +45,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </Script>
       </head>
       <body>
-        {children}
-        <WhatsAppFloatingButton />
+        <AppProviders>
+          {children}
+          <WhatsAppFloatingButton />
+        </AppProviders>
       </body>
     </html>
   );

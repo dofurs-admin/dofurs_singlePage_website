@@ -1,9 +1,12 @@
 import Link from 'next/link';
 import ContentPageLayout from '@/components/ContentPageLayout';
-import { formEmbeds } from '@/lib/site-data';
 import FadeInSection from '@/components/FadeInSection';
+import CustomerBookingFlow from '@/components/forms/CustomerBookingFlow';
+import { requireAuthenticatedUser } from '@/lib/auth/session';
 
-export default function CustomerBookingFormPage() {
+export default async function CustomerBookingFormPage() {
+  await requireAuthenticatedUser('/auth/sign-in?next=/forms/customer-booking');
+
   return (
     <ContentPageLayout
       title="Book Premium Pet Care in Minutes"
@@ -31,12 +34,9 @@ export default function CustomerBookingFormPage() {
       <FadeInSection delay={0.08}>
         <div id="booking-form" className="overflow-hidden rounded-3xl border border-[#f2dfcf] bg-white shadow-soft-md">
           <div className="h-1.5 w-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)]" aria-hidden="true" />
-          <iframe
-            src={formEmbeds.booking}
-            title="Customer Booking Form"
-            className="h-[1250px] w-full"
-            loading="lazy"
-          />
+          <div className="p-4 md:p-6">
+            <CustomerBookingFlow />
+          </div>
         </div>
       </FadeInSection>
     </ContentPageLayout>
