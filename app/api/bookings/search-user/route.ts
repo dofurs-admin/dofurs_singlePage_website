@@ -14,6 +14,53 @@ type SearchUser = {
   role: string | null;
 };
 
+type AuthListUser = {
+  id: string;
+  email: string | null;
+  raw_user_meta_data: Record<string, unknown>;
+};
+
+async function listAuthUsersForQuery(query: string): Promise<AuthListUser[]> {
+  const adminClient = getSupabaseAdminClient();
+  const normalizedQuery = query.toLowerCase();
+  const output: AuthListUser[] = [];
+
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+
+    if (error) {
+      return output;
+    }
+
+    const users = data?.users ?? [];
+    if (users.length === 0) {
+      break;
+    }
+
+    for (const row of users) {
+      const metadata = (row.user_metadata ?? {}) as Record<string, unknown>;
+      const metadataName =
+        (typeof metadata.name === 'string' ? metadata.name.toLowerCase() : '') ||
+        (typeof metadata.full_name === 'string' ? metadata.full_name.toLowerCase() : '');
+      const email = row.email?.toLowerCase() ?? '';
+
+      if (email.includes(normalizedQuery) || metadataName.includes(normalizedQuery)) {
+        output.push({
+          id: row.id,
+          email: row.email ?? null,
+          raw_user_meta_data: metadata,
+        });
+      }
+    }
+
+    if (output.length >= 250 || users.length < 200) {
+      break;
+    }
+  }
+
+  return output.slice(0, 250);
+}
+
 export async function GET(request: Request) {
   const { user, role } = await getApiAuthContext();
 
@@ -46,32 +93,22 @@ export async function GET(request: Request) {
   const normalizedQuery = parsed.data.query.toLowerCase();
   const queryLike = `%${parsed.data.query}%`;
 
-  const [publicUsersResult, authUsersResult] = await Promise.all([
+  const [publicUsersResult, authUsers] = await Promise.all([
     adminClient
       .from('users')
       .select('id, name, email, roles(name)')
       .or(`name.ilike.${queryLike},email.ilike.${queryLike}`)
       .limit(250),
-    adminClient
-      .schema('auth')
-      .from('users')
-      .select('id, email, raw_user_meta_data, created_at')
-      .ilike('email', queryLike)
-      .order('created_at', { ascending: true })
-      .limit(250),
+    listAuthUsersForQuery(parsed.data.query),
   ]);
 
   if (publicUsersResult.error) {
     return NextResponse.json({ error: publicUsersResult.error.message }, { status: 500 });
   }
 
-  if (authUsersResult.error) {
-    return NextResponse.json({ error: authUsersResult.error.message }, { status: 500 });
-  }
-
   const mergedById = new Map<string, SearchUser>();
 
-  for (const row of authUsersResult.data ?? []) {
+  for (const row of authUsers) {
     const metadata = (row.raw_user_meta_data ?? {}) as Record<string, unknown>;
     const metadataName =
       (typeof metadata.name === 'string' ? metadata.name.trim() : '') ||

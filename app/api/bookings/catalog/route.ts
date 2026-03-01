@@ -15,6 +15,44 @@ type BookableUser = {
   role?: string | null;
 };
 
+type AuthListUser = {
+  id: string;
+  email: string | null;
+  raw_user_meta_data: Record<string, unknown>;
+};
+
+async function listAuthUsers(limit: number): Promise<AuthListUser[]> {
+  const adminClient = getSupabaseAdminClient();
+  const output: AuthListUser[] = [];
+
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+
+    if (error) {
+      return output;
+    }
+
+    const users = data?.users ?? [];
+    if (users.length === 0) {
+      break;
+    }
+
+    for (const row of users) {
+      output.push({
+        id: row.id,
+        email: row.email ?? null,
+        raw_user_meta_data: (row.user_metadata ?? {}) as Record<string, unknown>,
+      });
+    }
+
+    if (output.length >= limit || users.length < 200) {
+      break;
+    }
+  }
+
+  return output.slice(0, limit);
+}
+
 export async function GET(request: Request) {
   const { user, role, supabase } = await getApiAuthContext();
 
@@ -59,31 +97,22 @@ export async function GET(request: Request) {
   let bookableUsers: BookableUser[] = [];
 
   if (canBookForUsers) {
-    const [allUsersResult, authUsersResult] = await Promise.all([
+    const [allUsersResult, authUsers] = await Promise.all([
       adminClient
       .from('users')
       .select('id, name, email, roles(name)')
       .order('name', { ascending: true })
       .limit(1000),
-      adminClient
-        .schema('auth')
-        .from('users')
-        .select('id, email, raw_user_meta_data, created_at')
-        .order('created_at', { ascending: true })
-        .limit(1000),
+      listAuthUsers(1000),
     ]);
 
     if (allUsersResult.error) {
       return NextResponse.json({ error: allUsersResult.error.message }, { status: 500 });
     }
 
-    if (authUsersResult.error) {
-      return NextResponse.json({ error: authUsersResult.error.message }, { status: 500 });
-    }
-
     const mergedById = new Map<string, BookableUser>();
 
-    for (const row of authUsersResult.data ?? []) {
+    for (const row of authUsers) {
       const metadata = (row.raw_user_meta_data ?? {}) as Record<string, unknown>;
       const metadataName =
         (typeof metadata.name === 'string' ? metadata.name.trim() : '') ||
