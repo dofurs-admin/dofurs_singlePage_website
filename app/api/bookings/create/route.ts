@@ -1,25 +1,28 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getSupabaseServerClient } from '@/lib/supabase/server-client';
+import { createBooking } from '@/lib/bookings/service';
+import { getApiAuthContext, forbidden, unauthorized } from '@/lib/auth/api-auth';
+import { getProviderIdByUserId } from '@/lib/provider-management/api';
 
 const bookingSchema = z.object({
   petId: z.number().int().positive(),
-  serviceId: z.number().int().positive(),
-  bookingStart: z.string().datetime({ offset: true }),
-  paymentMode: z.string().min(1).max(50),
-  amount: z.number().nonnegative(),
+  providerId: z.number().int().positive(),
+  providerServiceId: z.string().uuid(),
+  bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  bookingMode: z.enum(['home_visit', 'clinic_visit', 'teleconsult']),
+  locationAddress: z.string().trim().max(1000).nullable().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  providerNotes: z.string().trim().max(2000).nullable().optional(),
+  bookingUserId: z.string().uuid().optional(),
 });
 
 export async function POST(request: Request) {
-  const supabase = await getSupabaseServerClient();
+  const { supabase, user, role } = await getApiAuthContext();
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!user) {
+    return unauthorized();
   }
 
   const body = await request.json().catch(() => null);
@@ -29,26 +32,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid booking payload', details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { data, error } = await supabase.rpc('create_booking', {
-    p_user_id: user.id,
-    p_pet_id: parsed.data.petId,
-    p_service_id: parsed.data.serviceId,
-    p_booking_start: parsed.data.bookingStart,
-    p_payment_mode: parsed.data.paymentMode,
-    p_amount: parsed.data.amount,
-  });
+  const targetUserId = parsed.data.bookingUserId ?? user.id;
 
-  if (error) {
-    if (error.message.includes('BOOKING_OVERLAP')) {
+  if (targetUserId !== user.id && role !== 'admin' && role !== 'provider') {
+    return forbidden();
+  }
+
+  if (role === 'provider') {
+    const providerId = await getProviderIdByUserId(supabase, user.id);
+
+    if (!providerId || providerId !== parsed.data.providerId) {
+      return forbidden();
+    }
+  }
+
+  try {
+    const { bookingUserId: _bookingUserId, ...bookingInput } = parsed.data;
+    const booking = await createBooking(supabase, targetUserId, bookingInput);
+    return NextResponse.json({ success: true, booking });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Booking failed';
+
+    if (message.includes('BOOKING_OVERLAP')) {
       return NextResponse.json({ error: 'Selected time slot is no longer available.' }, { status: 409 });
     }
 
-    if (error.message.includes('PET_OWNERSHIP_INVALID')) {
+    if (message.includes('PET_OWNERSHIP_INVALID')) {
       return NextResponse.json({ error: 'Pet does not belong to this user.' }, { status: 403 });
     }
 
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+    if (message.includes('HOME_VISIT_LOCATION_REQUIRED')) {
+      return NextResponse.json(
+        { error: 'Home visit bookings require address and geo coordinates.' },
+        { status: 400 },
+      );
+    }
 
-  return NextResponse.json({ success: true, booking: data });
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

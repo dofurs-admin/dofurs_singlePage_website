@@ -76,6 +76,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Default role not configured' }, { status: 500 });
   }
 
+  const { data: existingProfileRole, error: existingProfileRoleError } = await supabase
+    .from('users')
+    .select('role_id')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (existingProfileRoleError) {
+    return NextResponse.json({ error: existingProfileRoleError.message }, { status: 500 });
+  }
+
+  const resolvedRoleId = existingProfileRole?.role_id ?? userRole.id;
+
   const { error: upsertError } = await supabase.from('users').upsert(
     {
       id: user.id,
@@ -85,7 +97,7 @@ export async function POST(request: Request) {
       address: normalizedAddress,
       age: normalizedAge,
       gender: normalizedGender,
-      role_id: userRole.id,
+      role_id: resolvedRoleId,
     },
     { onConflict: 'id' },
   );
@@ -106,6 +118,20 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ error: upsertError.message }, { status: 500 });
+  }
+
+  const { error: ownerProfileUpsertError } = await supabase.from('profiles').upsert(
+    {
+      id: user.id,
+      full_name: parsed.data.name,
+      phone_number: normalizedPhone,
+      gender: normalizedGender,
+    },
+    { onConflict: 'id' },
+  );
+
+  if (ownerProfileUpsertError) {
+    return NextResponse.json({ error: ownerProfileUpsertError.message }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

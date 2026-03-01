@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
-import { uploadCompressedImage } from '@/lib/storage/upload-client';
+import { bookingTimelineLabel } from '@/lib/bookings/timeline';
 
 type Pet = {
   id: number;
@@ -12,9 +12,7 @@ type Pet = {
   age: number | null;
   weight: number | null;
   gender: string | null;
-  vaccination_status: string | null;
   allergies: string | null;
-  behavior_notes: string | null;
   photo_url: string | null;
 };
 
@@ -22,7 +20,14 @@ type Booking = {
   id: number;
   booking_start: string;
   booking_end: string;
-  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  booking_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+  booking_status?: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+  booking_mode?: 'home_visit' | 'clinic_visit' | 'teleconsult' | null;
+  service_type?: string | null;
+  provider_id?: number;
   amount: number;
   payment_mode: string | null;
 };
@@ -36,17 +41,8 @@ export default function UserDashboardClient({
 }) {
   const [pets, setPets] = useState(initialPets);
   const [bookings, setBookings] = useState(initialBookings);
-  const [newPetName, setNewPetName] = useState('');
-  const [newPetBreed, setNewPetBreed] = useState('');
-  const [newPetAge, setNewPetAge] = useState('');
-  const [newPetWeight, setNewPetWeight] = useState('');
-  const [newPetGender, setNewPetGender] = useState('');
-  const [newPetVaccinationStatus, setNewPetVaccinationStatus] = useState('');
-  const [newPetAllergies, setNewPetAllergies] = useState('');
-  const [newPetBehaviorNotes, setNewPetBehaviorNotes] = useState('');
-  const [newPetPhoto, setNewPetPhoto] = useState<File | null>(null);
-  const [isAddPetModalOpen, setIsAddPetModalOpen] = useState(false);
   const [petPhotoUrls, setPetPhotoUrls] = useState<Record<number, string>>({});
+  const [bookingFilter, setBookingFilter] = useState<'all' | 'active' | 'history'>('all');
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
 
@@ -55,6 +51,44 @@ export default function UserDashboardClient({
       total: bookings.length,
       active: bookings.filter((booking) => booking.status === 'pending' || booking.status === 'confirmed').length,
     };
+  }, [bookings]);
+
+  const filteredBookings = useMemo(() => {
+    if (bookingFilter === 'active') {
+      return bookings.filter((booking) => booking.status === 'pending' || booking.status === 'confirmed');
+    }
+
+    if (bookingFilter === 'history') {
+      return bookings.filter((booking) => booking.status !== 'pending' && booking.status !== 'confirmed');
+    }
+
+    return bookings;
+  }, [bookings, bookingFilter]);
+
+  const userAlerts = useMemo(() => {
+    const alerts: Array<{ level: 'info' | 'warning' | 'success'; message: string }> = [];
+
+    const pending = bookings.filter((booking) => booking.status === 'pending').length;
+    const confirmed = bookings.filter((booking) => booking.status === 'confirmed').length;
+    const completed = bookings.filter((booking) => booking.status === 'completed').length;
+
+    if (pending > 0) {
+      alerts.push({ level: 'warning', message: `${pending} booking(s) are awaiting provider confirmation.` });
+    }
+
+    if (confirmed > 0) {
+      alerts.push({ level: 'info', message: `${confirmed} confirmed booking(s) coming up soon.` });
+    }
+
+    if (completed > 0) {
+      alerts.push({ level: 'success', message: `${completed} completed booking(s). Rebook your favorite service in one tap.` });
+    }
+
+    if (alerts.length === 0) {
+      alerts.push({ level: 'info', message: 'No active notifications. Start your next booking when ready.' });
+    }
+
+    return alerts;
   }, [bookings]);
 
   useEffect(() => {
@@ -112,100 +146,6 @@ export default function UserDashboardClient({
     };
   }, [pets]);
 
-  function addPet() {
-    const normalizedName = newPetName.trim();
-    const normalizedBreed = newPetBreed.trim();
-    const normalizedVaccination = newPetVaccinationStatus.trim();
-    const normalizedAllergies = newPetAllergies.trim();
-    const normalizedBehaviorNotes = newPetBehaviorNotes.trim();
-    const normalizedGender = newPetGender.trim();
-    const parsedAge = newPetAge.trim() ? Number.parseInt(newPetAge.trim(), 10) : null;
-    const parsedWeight = newPetWeight.trim() ? Number.parseFloat(newPetWeight.trim()) : null;
-
-    if (!normalizedName) {
-      showToast('Enter a pet name first.', 'error');
-      return;
-    }
-
-    if (parsedAge !== null && (!Number.isFinite(parsedAge) || parsedAge < 0 || parsedAge > 40)) {
-      showToast('Pet age must be between 0 and 40.', 'error');
-      return;
-    }
-
-    if (parsedWeight !== null && (!Number.isFinite(parsedWeight) || parsedWeight <= 0 || parsedWeight > 300)) {
-      showToast('Pet weight must be between 0.1 and 300 kg.', 'error');
-      return;
-    }
-
-    const optimisticPet: Pet = {
-      id: -Date.now(),
-      name: normalizedName,
-      breed: normalizedBreed || null,
-      age: parsedAge,
-      weight: parsedWeight,
-      gender: normalizedGender || null,
-      vaccination_status: normalizedVaccination || null,
-      allergies: normalizedAllergies || null,
-      behavior_notes: normalizedBehaviorNotes || null,
-      photo_url: null,
-    };
-
-    setPets((current) => [optimisticPet, ...current]);
-    setNewPetName('');
-    setNewPetBreed('');
-    setNewPetAge('');
-    setNewPetWeight('');
-    setNewPetGender('');
-    setNewPetVaccinationStatus('');
-    setNewPetAllergies('');
-    setNewPetBehaviorNotes('');
-
-    startTransition(async () => {
-      let photoUrl: string | null = null;
-
-      if (newPetPhoto) {
-        try {
-          const upload = await uploadCompressedImage(newPetPhoto, 'pet-photos');
-          photoUrl = upload.path;
-        } catch {
-          setPets((current) => current.filter((pet) => pet.id !== optimisticPet.id));
-          showToast('Photo upload failed.', 'error');
-          return;
-        }
-      }
-
-      const response = await fetch('/api/user/pets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: optimisticPet.name,
-          breed: optimisticPet.breed,
-          age: optimisticPet.age,
-          weight: optimisticPet.weight,
-          gender: optimisticPet.gender,
-          vaccinationStatus: optimisticPet.vaccination_status,
-          allergies: optimisticPet.allergies,
-          behaviorNotes: optimisticPet.behavior_notes,
-          photoUrl,
-        }),
-      });
-
-      if (!response.ok) {
-        setPets((current) => current.filter((pet) => pet.id !== optimisticPet.id));
-        showToast('Could not add pet.', 'error');
-        return;
-      }
-
-      const payload = (await response.json()) as { pet: Pet };
-      setPets((current) => [payload.pet, ...current.filter((pet) => pet.id !== optimisticPet.id)]);
-      setNewPetPhoto(null);
-      setIsAddPetModalOpen(false);
-      showToast('Pet added successfully.', 'success');
-    });
-  }
-
   function cancelBooking(bookingId: number) {
     const previous = bookings;
     setBookings((current) =>
@@ -234,6 +174,26 @@ export default function UserDashboardClient({
   return (
     <div className="grid gap-5">
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
+        <h2 className="text-xl font-semibold text-ink">Notification Center</h2>
+        <ul className="mt-4 grid gap-2 text-sm">
+          {userAlerts.map((alert, index) => (
+            <li
+              key={`${alert.level}-${index}`}
+              className={`rounded-xl border p-3 ${
+                alert.level === 'warning'
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : alert.level === 'success'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-[#f2dfcf] bg-[#fffdfa] text-[#6b6b6b]'
+              }`}
+            >
+              {alert.message}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <h2 className="text-center text-xl font-semibold text-ink">Book Service Now</h2>
         <p className="mt-2 text-center text-sm text-[#6b6b6b]">
           Ready to schedule care for your pet? Start a new booking with your saved profile and pet details.
@@ -248,9 +208,24 @@ export default function UserDashboardClient({
         </div>
       </section>
 
+      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
+        <h2 className="text-xl font-semibold text-ink">Booking Insights</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
+          <div className="rounded-xl border border-[#f2dfcf] p-3">Active bookings: {bookingCounts.active}</div>
+          <div className="rounded-xl border border-[#f2dfcf] p-3">Completed: {bookings.filter((booking) => booking.status === 'completed').length}</div>
+          <div className="rounded-xl border border-[#f2dfcf] p-3">No-show: {bookings.filter((booking) => booking.status === 'no_show').length}</div>
+        </div>
+      </section>
+
       <section id="pets" className="scroll-mt-24 rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl font-semibold text-ink">Pet Profiles</h2>
+          <Link
+            href="/dashboard/user/pets"
+            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink"
+          >
+            Open Complete Pet Passport
+          </Link>
         </div>
 
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -274,9 +249,7 @@ export default function UserDashboardClient({
                   {pet.age !== null ? <span>Age: {pet.age}</span> : null}
                   {pet.weight !== null ? <span>Weight: {pet.weight} kg</span> : null}
                   {pet.gender ? <span>Gender: {pet.gender}</span> : null}
-                  {pet.vaccination_status ? <span>Vaccination: {pet.vaccination_status}</span> : null}
                   {pet.allergies ? <span>Allergies: {pet.allergies}</span> : null}
-                  {pet.behavior_notes ? <span>Notes: {pet.behavior_notes}</span> : null}
                 </div>
               </li>
             ))
@@ -287,35 +260,62 @@ export default function UserDashboardClient({
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold text-ink">Bookings</h2>
-          <p className="text-xs text-[#6b6b6b]">
-            {bookingCounts.active} active / {bookingCounts.total} total
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-[#6b6b6b]">
+              {bookingCounts.active} active / {bookingCounts.total} total
+            </p>
+            <select
+              value={bookingFilter}
+              onChange={(event) => setBookingFilter(event.target.value as 'all' | 'active' | 'history')}
+              className="rounded-xl border border-[#f2dfcf] px-3 py-1 text-[11px]"
+            >
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="history">History</option>
+            </select>
+          </div>
         </div>
 
         <ul className="mt-4 grid gap-2">
-          {bookings.length === 0 ? (
+          {filteredBookings.length === 0 ? (
             <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-sm text-[#6b6b6b]">No bookings yet.</li>
           ) : (
-            bookings.map((booking) => (
+            filteredBookings.map((booking) => (
               <li key={booking.id} className="rounded-xl border border-[#f2dfcf] p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="font-semibold text-ink">#{booking.id}</p>
-                    <p className="text-xs text-[#6b6b6b]">{new Date(booking.booking_start).toLocaleString()}</p>
+                    <p className="text-xs text-[#6b6b6b]">
+                      {booking.booking_date && booking.start_time
+                        ? `${booking.booking_date} • ${booking.start_time}${booking.end_time ? ` - ${booking.end_time}` : ''}`
+                        : new Date(booking.booking_start).toLocaleString()}
+                    </p>
+                    <p className="text-[11px] text-[#6b6b6b]">{bookingTimelineLabel(booking.status)}</p>
+                    <p className="text-[11px] text-[#6b6b6b]">
+                      {(booking.service_type ?? 'Service')} • {(booking.booking_mode ?? 'home_visit').replace('_', ' ')}
+                    </p>
                   </div>
                   <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-2.5 py-1 text-[11px] font-medium capitalize text-ink">
-                    {booking.status}
+                    {booking.status.replace('_', ' ')}
                   </span>
                 </div>
-                {(booking.status === 'pending' || booking.status === 'confirmed') && (
-                  <button
-                    type="button"
-                    onClick={() => cancelBooking(booking.id)}
-                    className="mt-3 rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(booking.status === 'pending' || booking.status === 'confirmed') && (
+                    <button
+                      type="button"
+                      onClick={() => cancelBooking(booking.id)}
+                      className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
+                    >
+                      Cancel Booking
+                    </button>
+                  )}
+                  <Link
+                    href="/forms/customer-booking"
+                    className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
                   >
-                    Cancel Booking
-                  </button>
-                )}
+                    Rebook
+                  </Link>
+                </div>
               </li>
             ))
           )}
@@ -325,114 +325,17 @@ export default function UserDashboardClient({
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-ink">Add New Pet</h2>
-          <button
-            type="button"
-            onClick={() => setIsAddPetModalOpen(true)}
+          <Link
+            href="/dashboard/user/pets"
             className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink"
           >
-            Add Pet Profile
-          </button>
+            Add Complete Pet Passport
+          </Link>
         </div>
+        <p className="mt-3 text-sm text-[#6b6b6b]">
+          Create pet profiles using the full passport form (medical, behavior, feeding, grooming, and emergency details).
+        </p>
       </section>
-
-      {isAddPetModalOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-lg font-semibold text-ink">Add Pet Profile</h3>
-              <button
-                type="button"
-                onClick={() => setIsAddPetModalOpen(false)}
-                className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-xs font-semibold text-ink"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <input
-                value={newPetName}
-                onChange={(event) => setNewPetName(event.target.value)}
-                placeholder="Pet name *"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              />
-              <input
-                value={newPetBreed}
-                onChange={(event) => setNewPetBreed(event.target.value)}
-                placeholder="Breed"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              />
-              <input
-                type="number"
-                min={0}
-                max={40}
-                value={newPetAge}
-                onChange={(event) => setNewPetAge(event.target.value)}
-                placeholder="Age"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              />
-              <input
-                type="number"
-                min={0.1}
-                max={300}
-                step={0.1}
-                value={newPetWeight}
-                onChange={(event) => setNewPetWeight(event.target.value)}
-                placeholder="Weight (kg)"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              />
-              <select
-                value={newPetGender}
-                onChange={(event) => setNewPetGender(event.target.value)}
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              >
-                <option value="">Gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
-              </select>
-              <input
-                value={newPetVaccinationStatus}
-                onChange={(event) => setNewPetVaccinationStatus(event.target.value)}
-                placeholder="Vaccination status"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              />
-              <input
-                value={newPetAllergies}
-                onChange={(event) => setNewPetAllergies(event.target.value)}
-                placeholder="Allergies"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2"
-              />
-              <input
-                value={newPetBehaviorNotes}
-                onChange={(event) => setNewPetBehaviorNotes(event.target.value)}
-                placeholder="Behavior notes"
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-3"
-              />
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="cursor-pointer rounded-full border border-[#f2dfcf] bg-white px-3 py-2 text-xs text-ink">
-                {newPetPhoto ? `Photo selected: ${newPetPhoto.name}` : 'Upload Photo'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => setNewPetPhoto(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={addPet}
-                disabled={isPending}
-                className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-60"
-              >
-                {isPending ? 'Adding...' : 'Save Pet Profile'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

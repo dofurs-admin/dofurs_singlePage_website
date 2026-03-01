@@ -31,7 +31,34 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ profile: data });
+  const [ownerProfileResult, providerResult] = await Promise.all([
+    supabase.from('profiles').select('profile_photo_url').eq('id', user.id).maybeSingle(),
+    supabase
+      .from('providers')
+      .select('profile_photo_url')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (ownerProfileResult.error && ownerProfileResult.error.code !== 'PGRST116') {
+    return NextResponse.json({ error: ownerProfileResult.error.message }, { status: 500 });
+  }
+
+  if (providerResult.error && providerResult.error.code !== 'PGRST116') {
+    return NextResponse.json({ error: providerResult.error.message }, { status: 500 });
+  }
+
+  const resolvedPhotoUrl =
+    data.photo_url ?? ownerProfileResult.data?.profile_photo_url ?? providerResult.data?.profile_photo_url ?? null;
+
+  return NextResponse.json({
+    profile: {
+      ...data,
+      photo_url: resolvedPhotoUrl,
+    },
+  });
 }
 
 export async function PATCH(request: Request) {

@@ -200,7 +200,7 @@ export default function Navbar() {
           {isAuthResolved && authUser ? (
             <>
               <Link
-                href="/dashboard/user"
+                href="/dashboard"
                 className="inline-flex rounded-full border border-[#f1e6da] bg-white px-4 py-2 text-sm font-semibold text-ink transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-[#fff7f0]"
                 aria-label="Open your dashboard"
               >
@@ -294,7 +294,7 @@ export default function Navbar() {
 
             {isAuthResolved && authUser ? (
               <>
-                <Link href="/dashboard/user" className="inline-flex w-full items-center justify-center rounded-full border border-[#f1e6da] bg-white px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-[#fff7f0]" onClick={() => setMenuOpen(false)}>
+                <Link href="/dashboard" className="inline-flex w-full items-center justify-center rounded-full border border-[#f1e6da] bg-white px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-[#fff7f0]" onClick={() => setMenuOpen(false)}>
                   Dashboard
                 </Link>
                 <Link href="/dashboard/user/profile" className="inline-flex w-full items-center justify-center rounded-full border border-[#f1e6da] bg-[#fff7f0] px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-[#ffefe0]" onClick={() => setMenuOpen(false)}>

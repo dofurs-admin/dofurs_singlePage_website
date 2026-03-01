@@ -94,7 +94,8 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
   const { showToast } = useToast();
   const router = useRouter();
   const params = useSearchParams();
-  const nextPath = '/dashboard/user';
+  const requestedNextPath = params.get('next');
+  const nextPath = requestedNextPath && requestedNextPath.startsWith('/') ? requestedNextPath : '/dashboard';
   const callbackErrorCode = params.get('error_code');
   const callbackErrorDescription = params.get('error_description');
 
@@ -669,6 +670,8 @@ function UnifiedAuthPageContent() {
   const router = useRouter();
   const params = useSearchParams();
   const modeParam = params.get('mode');
+  const nextParam = params.get('next');
+  const reasonParam = params.get('reason');
   const hasModeParam = modeParam === 'signin' || modeParam === 'signup';
   const [mode, setMode] = useState<'signin' | 'signup'>(modeParam === 'signup' ? 'signup' : 'signin');
   const [isModeReady, setIsModeReady] = useState(hasModeParam);
@@ -683,16 +686,17 @@ function UnifiedAuthPageContent() {
     }
 
     const savedMode = window.localStorage.getItem('dofurs-auth-mode');
+    const mustSignIn = Boolean(nextParam) || reasonParam === 'inactive';
+    const resolvedMode = mustSignIn ? 'signin' : savedMode === 'signup' ? 'signup' : 'signin';
 
-    if (savedMode === 'signin' || savedMode === 'signup') {
-      setMode(savedMode);
-      router.replace(`/auth/sign-in?mode=${savedMode}`);
-    } else {
-      setMode('signin');
-    }
+    setMode(resolvedMode);
+
+    const nextSearchParams = new URLSearchParams(params.toString());
+    nextSearchParams.set('mode', resolvedMode);
+    router.replace(`/auth/sign-in?${nextSearchParams.toString()}`);
 
     setIsModeReady(true);
-  }, [hasModeParam, modeParam, router]);
+  }, [hasModeParam, modeParam, nextParam, params, reasonParam, router]);
 
   const signInHref = '/auth/sign-in?mode=signin';
   const signUpHref = '/auth/sign-in?mode=signup';

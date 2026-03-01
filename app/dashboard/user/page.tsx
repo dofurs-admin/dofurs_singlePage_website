@@ -8,7 +8,9 @@ export default async function UserDashboardPage() {
     supabase.from('pets').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
     supabase
       .from('bookings')
-      .select('id, booking_start, booking_end, status, amount, payment_mode')
+      .select(
+        'id, booking_start, booking_end, booking_date, start_time, end_time, status, booking_status, booking_mode, amount, payment_mode, service_type, provider_id',
+      )
       .eq('user_id', user.id)
       .order('booking_start', { ascending: false }),
   ]);

@@ -153,8 +153,8 @@ export default function UserSettingsClient({ initialProfile }: { initialProfile:
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-xl font-semibold text-ink">User Settings</h1>
-          <Link
-            href="/dashboard/user"
+              <Link
+                href="/dashboard"
             className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink"
           >
             Back to Dashboard
