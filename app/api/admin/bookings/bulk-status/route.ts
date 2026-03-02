@@ -16,7 +16,7 @@ export async function PATCH(request: Request) {
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

@@ -1,9 +1,14 @@
-type VaccinationPatchLike = {
-  _delete?: boolean;
-  vaccineName: string;
-  administeredDate: string;
-  nextDueDate?: string | null;
-};
+type VaccinationPatchLike =
+  | {
+      _delete?: false;
+      vaccineName: string;
+      administeredDate: string;
+      nextDueDate?: string | null;
+    }
+  | {
+      _delete: true;
+      id?: string;
+    };
 
 type EmergencyInfoPatchLike = {
   emergencyContactPhone?: string | null;

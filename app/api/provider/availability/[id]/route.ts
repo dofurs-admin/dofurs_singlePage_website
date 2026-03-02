@@ -11,7 +11,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -46,7 +46,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

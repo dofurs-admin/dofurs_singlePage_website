@@ -31,10 +31,10 @@ export async function getCurrentUserRole() {
   return roleRecord?.name ?? null;
 }
 
-export async function requireRole(allowedRoles: Array<'user' | 'provider' | 'admin'>, fallbackPath = '/dashboard') {
+export async function requireRole(allowedRoles: Array<'user' | 'provider' | 'admin' | 'staff'>, fallbackPath = '/dashboard') {
   const role = await getCurrentUserRole();
 
-  if (!role || !allowedRoles.includes(role as 'user' | 'provider' | 'admin')) {
+  if (!role || !allowedRoles.includes(role as 'user' | 'provider' | 'admin' | 'staff')) {
     redirect(fallbackPath);
   }
 

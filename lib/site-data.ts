@@ -24,7 +24,7 @@ export const footerInfoLinks = [
 export const footerPolicyLinks = [
   { label: 'Privacy Policy', href: '/privacy-policy' },
   { label: 'Terms & Conditions', href: '/terms-conditions' },
-  { label: 'Refund & Cancellation', href: '/refund-cancellation-policy' },
+  { label: 'Cancellation & Adjustment', href: '/cancellation-adjustment-policy' },
 ] as const;
 
 export const services = [

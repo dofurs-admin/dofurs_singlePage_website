@@ -74,10 +74,10 @@ export async function GET(request: Request) {
   if (!effectiveRole) {
     const { data: roleProbe } = await adminClient.from('users').select('roles(name)').eq('id', user.id).maybeSingle();
     const probedRole = (Array.isArray(roleProbe?.roles) ? roleProbe?.roles[0] : roleProbe?.roles)?.name;
-    effectiveRole = (probedRole as 'admin' | 'provider' | 'user' | null | undefined) ?? null;
+    effectiveRole = (probedRole as 'admin' | 'staff' | 'provider' | 'user' | null | undefined) ?? null;
   }
 
-  if (effectiveRole !== 'admin' && effectiveRole !== 'provider') {
+  if (effectiveRole !== 'admin' && effectiveRole !== 'staff' && effectiveRole !== 'provider') {
     return forbidden();
   }
 
@@ -135,7 +135,7 @@ export async function GET(request: Request) {
   }
 
   const users = Array.from(mergedById.values())
-    .filter((row) => row.role !== 'admin' && row.role !== 'provider')
+    .filter((row) => row.role !== 'admin' && row.role !== 'staff' && row.role !== 'provider')
     .filter((row) => {
       const name = row.name?.toLowerCase() ?? '';
       const email = row.email?.toLowerCase() ?? '';

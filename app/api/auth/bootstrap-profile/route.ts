@@ -13,11 +13,13 @@ export async function POST() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let { data: existingProfile, error: existingProfileError } = await supabase
+  const { data: existingProfileData, error: existingProfileError } = await supabase
     .from('users')
-    .select('id, name, phone, photo_url, gender')
+    .select('*')
     .eq('id', user.id)
     .maybeSingle();
+
+  let existingProfile = existingProfileData;
 
   if (existingProfileError) {
     return NextResponse.json({ error: existingProfileError.message }, { status: 500 });
@@ -82,7 +84,7 @@ export async function POST() {
 
     const reloadProfileResult = await supabase
       .from('users')
-      .select('id, name, phone, photo_url, gender')
+      .select('*')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -113,15 +115,23 @@ export async function POST() {
     return NextResponse.json({ error: existingOwnerProfileError.message }, { status: 500 });
   }
 
-  if (!existingOwnerProfile && existingProfile.phone) {
-    const fallbackName = existingProfile.name?.trim() || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Pet Owner';
+  const profilePhone = typeof existingProfile?.phone === 'string' ? existingProfile.phone : null;
+  const profileName = typeof existingProfile?.name === 'string' ? existingProfile.name : null;
+  const profilePhotoUrl = typeof existingProfile?.photo_url === 'string' ? existingProfile.photo_url : null;
+  const profileGender =
+    existingProfile?.gender === 'male' || existingProfile?.gender === 'female' || existingProfile?.gender === 'other'
+      ? existingProfile.gender
+      : null;
+
+  if (!existingOwnerProfile && profilePhone) {
+    const fallbackName = profileName?.trim() || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Pet Owner';
 
     const { error: createOwnerProfileError } = await supabase.from('profiles').insert({
       id: user.id,
       full_name: fallbackName,
-      phone_number: existingProfile.phone,
-      profile_photo_url: existingProfile.photo_url,
-      gender: existingProfile.gender,
+      phone_number: profilePhone,
+      profile_photo_url: profilePhotoUrl,
+      gender: profileGender,
     });
 
     if (createOwnerProfileError && createOwnerProfileError.code !== '23505') {
@@ -129,7 +139,7 @@ export async function POST() {
     }
   }
 
-  if (existingOwnerProfile || existingProfile.phone) {
+  if (existingOwnerProfile || profilePhone) {
     return NextResponse.json({ success: true });
   }
 

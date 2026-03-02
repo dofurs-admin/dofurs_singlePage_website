@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import { bookingTimelineLabel } from '@/lib/bookings/timeline';
 import type { ProviderDashboard, ProviderReview } from '@/lib/provider-management/types';
+import { apiRequest } from '@/lib/api/client';
 
 const WEEK_DAYS = [
   { label: 'Sunday', day: 0 },
@@ -42,10 +44,17 @@ type ProviderBlockedDate = {
   created_at: string;
 };
 
+type ProviderDashboardView =
+  | 'overview'
+  | 'operations'
+  | 'profile';
+
 export default function ProviderDashboardClient({
   initialDashboard,
+  view = 'overview',
 }: {
   initialDashboard: ProviderDashboard | null;
+  view?: ProviderDashboardView;
 }) {
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(initialDashboard);
   const [isPending, startTransition] = useTransition();
@@ -188,18 +197,6 @@ export default function ProviderDashboardClient({
     setDocumentDraft(nextDocumentDraft);
   }, [dashboard]);
 
-  useEffect(() => {
-    void fetchReviews(1, reviewFilter);
-  }, [reviewFilter]);
-
-  useEffect(() => {
-    void fetchProviderBookings(bookingFilter);
-  }, [bookingFilter]);
-
-  useEffect(() => {
-    void fetchBlockedDates();
-  }, []);
-
   const performanceSummary = useMemo(() => {
     if (!dashboard) {
       return null;
@@ -279,27 +276,12 @@ export default function ProviderDashboardClient({
     return alerts;
   }, [bookingInsights.noShow, bookingInsights.pending, blockedDates.length, performanceSummary]);
 
-  async function providerRequest<T>(path: string, init?: RequestInit, retries = 2): Promise<T> {
+  const providerRequest = useCallback(async <T,>(path: string, init?: RequestInit, retries = 2): Promise<T> => {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        const response = await fetch(path, {
-          ...init,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(init?.headers ?? {}),
-          },
-          cache: 'no-store',
-        });
-
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-        if (!response.ok) {
-          throw new Error(payload?.error ?? 'Request failed');
-        }
-
-        return payload as T;
+        return await apiRequest<T>(path, init);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error('Request failed');
         if (attempt < retries) {
@@ -310,14 +292,14 @@ export default function ProviderDashboardClient({
     }
 
     throw lastError ?? new Error('Request failed');
-  }
+  }, []);
 
-  async function refreshDashboard() {
+  const refreshDashboard = useCallback(async () => {
     const response = await providerRequest<{ dashboard: ProviderDashboard | null }>('/api/provider/dashboard');
     setDashboard(response.dashboard);
-  }
+  }, [providerRequest]);
 
-  async function fetchReviews(page: number, filter: 'all' | '1' | '2' | '3' | '4' | '5') {
+  const fetchReviews = useCallback(async (page: number, filter: 'all' | '1' | '2' | '3' | '4' | '5') => {
     const params = new URLSearchParams();
     params.set('page', String(page));
     params.set('pageSize', '10');
@@ -332,9 +314,9 @@ export default function ProviderDashboardClient({
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Unable to load reviews.', 'error');
     }
-  }
+  }, [providerRequest, showToast]);
 
-  async function fetchProviderBookings(filter: 'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show') {
+  const fetchProviderBookings = useCallback(async (filter: 'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show') => {
     const params = new URLSearchParams();
     params.set('fromDate', new Date().toISOString().slice(0, 10));
     params.set('limit', '200');
@@ -349,16 +331,28 @@ export default function ProviderDashboardClient({
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Unable to load booking queue.', 'error');
     }
-  }
+  }, [providerRequest, showToast]);
 
-  async function fetchBlockedDates() {
+  const fetchBlockedDates = useCallback(async () => {
     try {
       const response = await providerRequest<{ blockedDates: ProviderBlockedDate[] }>('/api/provider/blocked-dates');
       setBlockedDates(response.blockedDates);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Unable to load blocked dates.', 'error');
     }
-  }
+  }, [providerRequest, showToast]);
+
+  useEffect(() => {
+    void fetchReviews(1, reviewFilter);
+  }, [fetchReviews, reviewFilter]);
+
+  useEffect(() => {
+    void fetchProviderBookings(bookingFilter);
+  }, [bookingFilter, fetchProviderBookings]);
+
+  useEffect(() => {
+    void fetchBlockedDates();
+  }, [fetchBlockedDates]);
 
   function setProviderBookingStatus(
     bookingId: number,
@@ -676,6 +670,39 @@ export default function ProviderDashboardClient({
 
   return (
     <div className="grid gap-5">
+      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-4 shadow-soft-md">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Provider Dashboard</h2>
+            <p className="mt-1 text-xs text-[#6b6b6b]">Overview stays focused on observability; editing workflows are opened via dedicated sections.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'operations', label: 'Operations' },
+              { id: 'profile', label: 'Profile Studio' },
+            ].map((item) => {
+              const isActive = view === item.id;
+
+              return (
+                <Link
+                  key={item.id}
+                  href={item.id === 'overview' ? '/dashboard/provider' : `/dashboard/provider?view=${item.id}`}
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                    isActive
+                      ? 'border-[#f2dfcf] bg-[#fff7f0] text-ink'
+                      : 'border-[#f2dfcf] bg-white text-[#6b6b6b] hover:text-ink'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {view === 'overview' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Notification Center</h2>
         <ul className="mt-4 grid gap-2 text-sm">
@@ -695,7 +722,9 @@ export default function ProviderDashboardClient({
           ))}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'overview' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Workload Insights</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
@@ -707,7 +736,9 @@ export default function ProviderDashboardClient({
           <div className="rounded-xl border border-[#f2dfcf] p-3">Evening Load: {bookingInsights.hourBuckets.Evening}</div>
         </div>
       </section>
+      ) : null}
 
+      {view === 'overview' || view === 'operations' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold text-ink">Booking Command Center</h2>
@@ -797,7 +828,9 @@ export default function ProviderDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'operations' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Blocked Dates</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -845,7 +878,9 @@ export default function ProviderDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 1 – Profile Information</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -899,7 +934,9 @@ export default function ProviderDashboardClient({
           Save Profile
         </button>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 2 – Professional/Clinic Details</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 text-sm">
@@ -971,7 +1008,9 @@ export default function ProviderDashboardClient({
           Save Details
         </button>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 3 – Availability</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -1128,7 +1167,9 @@ export default function ProviderDashboardClient({
           ))}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 4 – Documents</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1210,7 +1251,9 @@ export default function ProviderDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'operations' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 5 – Reviews</h2>
         <div className="mt-3 flex items-center gap-2">
@@ -1302,7 +1345,9 @@ export default function ProviderDashboardClient({
           </button>
         </div>
       </section>
+      ) : null}
 
+      {view === 'overview' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Section 6 – Performance Overview</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
@@ -1315,7 +1360,9 @@ export default function ProviderDashboardClient({
         </div>
         <p className="mt-3 text-xs text-[#6b6b6b]">Account status: {performanceSummary?.accountStatus ?? 'unknown'}</p>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-xl font-semibold text-ink">Pricing (View-only for Providers)</h2>
         <ul className="mt-4 grid gap-2 text-sm">
@@ -1333,6 +1380,7 @@ export default function ProviderDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
     </div>
   );
 }

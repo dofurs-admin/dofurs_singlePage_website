@@ -1,22 +1,10 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
-
-const preSignUpSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  email: z.string().trim().email().max(200),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^\+[1-9]\d{6,14}$/),
-  address: z.string().trim().min(5).max(300),
-  age: z.number().int().min(13).max(120),
-  gender: z.enum(['male', 'female', 'other']),
-});
+import { ownerProfileSchema } from '@/lib/flows/validation';
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
-  const parsed = preSignUpSchema.safeParse(payload);
+  const parsed = ownerProfileSchema.safeParse(payload);
 
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid sign-up payload', details: parsed.error.flatten() }, { status: 400 });

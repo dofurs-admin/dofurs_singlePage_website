@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import FadeInSection from './FadeInSection';
 import { steps } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
@@ -23,9 +24,11 @@ export default function HowItWorksSection() {
               <FadeInSection key={step.title} delay={index * 0.1} className="h-full">
                 <article className="group relative flex h-full flex-col overflow-hidden rounded-3xl border border-[#f0e4d7] bg-white p-7 shadow-soft transition-all duration-300 ease-out hover:-translate-y-1.5 hover:shadow-[0_22px_40px_rgba(0,0,0,0.12)]">
                   <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-                    <img
+                    <Image
                       src={stepBackgrounds[step.title] ?? '/Birthday/chose%20service_card.png'}
                       alt=""
+                      fill
+                      sizes="(max-width: 768px) 100vw, 33vw"
                       className="absolute inset-0 h-full w-full scale-[1.08] object-cover object-center opacity-[0.38] mix-blend-multiply transition-all duration-300 group-hover:scale-[1.12] group-hover:opacity-[0.44]"
                     />
                     <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.34)_0%,rgba(255,255,255,0.48)_56%,rgba(255,255,255,0.62)_100%)]" />

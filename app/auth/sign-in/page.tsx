@@ -9,6 +9,7 @@ import { Loader2, Mail, ShieldCheck, Sparkles } from 'lucide-react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
 import { useToast } from '@/components/ui/ToastProvider';
 import SignUpAuthPanel from '@/components/auth/SignUpAuthPanel';
+import type { FlowState } from '@/lib/flows/contracts';
 
 type SignInStep = 'collect' | 'verify';
 
@@ -104,6 +105,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
   const [otp, setOtp] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [flowState, setFlowState] = useState<FlowState>('collecting');
   const [isPending, setIsPending] = useState(false);
   const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
@@ -224,12 +226,14 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
     event.preventDefault();
     setError(null);
     setMessage(null);
+    setFlowState('validating');
     setIsPending(true);
 
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail) {
       setError('Please enter your email address.');
+      setFlowState('collecting');
       setIsPending(false);
       return;
     }
@@ -259,6 +263,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         }
 
         setError(getReadableAuthError(resolvedMessage));
+        setFlowState('error');
         showToast('Sign in failed. Check the error message.', 'error');
         setIsPending(false);
         return;
@@ -267,11 +272,13 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
       setResendCooldownSeconds(60);
       setStep('verify');
       setOtp('');
+      setFlowState('ready');
       setMessage('6-digit OTP sent to your email. Enter it below to complete sign-in.');
       showToast('Email OTP sent successfully.', 'success');
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : '';
       setError(message || 'Unable to send email OTP right now. Please try again in a moment.');
+      setFlowState('error');
       showToast('Could not send email OTP.', 'error');
     } finally {
       setIsPending(false);
@@ -288,10 +295,12 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
 
     if (!/^\d{6}$/.test(normalizedOtp)) {
       setError('Enter the 6-digit OTP from your email.');
+      setFlowState('collecting');
       return;
     }
 
     setIsPending(true);
+    setFlowState('submitting');
 
     try {
       const supabase = getSupabaseBrowserClient();
@@ -303,6 +312,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
 
       if (verifyError) {
         setError(getReadableAuthError(verifyError.message));
+        setFlowState('error');
         showToast('OTP verification failed.', 'error');
         return;
       }
@@ -320,6 +330,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         if (response.status === 409 && payload.requiresProfileSetup) {
           setNeedsProfileSetup(true);
           setStep('collect');
+          setFlowState('collecting');
           setCompleteProfileData((current) => ({
             ...current,
             email: normalizedEmail,
@@ -330,15 +341,18 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         }
 
         setError(normalizeErrorMessage(payload.error));
+        setFlowState('error');
         showToast('Profile bootstrap failed.', 'error');
         return;
       }
 
+      setFlowState('success');
       router.replace(nextPath);
       router.refresh();
       showToast('Signed in successfully.', 'success');
     } catch {
       setError('Unable to verify OTP right now. Please try again.');
+      setFlowState('error');
       showToast('OTP verification failed.', 'error');
     } finally {
       setIsPending(false);
@@ -437,6 +451,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         </div>
         <h1 className="text-2xl font-bold text-ink">Sign in with Email</h1>
         <p className="mt-2 text-sm text-[#6b6b6b]">Enter your email and we’ll send a secure 6-digit OTP.</p>
+        <p className="mt-1 text-xs text-[#8a7b6f]">Flow state: {flowState}</p>
 
         {needsProfileSetup && (
           <form onSubmit={handleCompleteProfile} className="mt-6 space-y-4">

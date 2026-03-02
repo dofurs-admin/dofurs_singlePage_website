@@ -21,6 +21,19 @@ type AuthListUser = {
   raw_user_meta_data: Record<string, unknown>;
 };
 
+type CatalogDiscount = {
+  id: string;
+  code: string;
+  title: string;
+  discount_type: 'percentage' | 'flat';
+  discount_value: number;
+  max_discount_amount: number | null;
+  min_booking_amount: number | null;
+  applies_to_service_type: string | null;
+  first_booking_only: boolean;
+  valid_until: string | null;
+};
+
 async function listAuthUsers(limit: number): Promise<AuthListUser[]> {
   const adminClient = getSupabaseAdminClient();
   const output: AuthListUser[] = [];
@@ -66,7 +79,7 @@ export async function GET(request: Request) {
   if (!effectiveRole) {
     const { data: roleProbe } = await adminClient.from('users').select('roles(name)').eq('id', user.id).maybeSingle();
     const probedRole = (Array.isArray(roleProbe?.roles) ? roleProbe?.roles[0] : roleProbe?.roles)?.name;
-    effectiveRole = (probedRole as 'admin' | 'provider' | 'user' | null | undefined) ?? null;
+    effectiveRole = (probedRole as 'admin' | 'staff' | 'provider' | 'user' | null | undefined) ?? null;
   }
 
   const url = new URL(request.url);
@@ -78,7 +91,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid query parameters' }, { status: 400 });
   }
 
-  const canBookForUsers = effectiveRole === 'admin' || effectiveRole === 'provider';
+  const canBookForUsers = effectiveRole === 'admin' || effectiveRole === 'staff' || effectiveRole === 'provider';
 
   if (parsed.data.userId && !canBookForUsers && parsed.data.userId !== user.id) {
     return forbidden();
@@ -139,7 +152,7 @@ export async function GET(request: Request) {
     }
 
     bookableUsers = Array.from(mergedById.values())
-      .filter((row) => row.role !== 'admin' && row.role !== 'provider')
+      .filter((row) => row.role !== 'admin' && row.role !== 'staff' && row.role !== 'provider')
       .sort((left, right) => {
         const leftLabel = (left.name ?? left.email ?? left.id).toLowerCase();
         const rightLabel = (right.name ?? right.email ?? right.id).toLowerCase();
@@ -185,6 +198,22 @@ export async function GET(request: Request) {
 
   const providerServices = providerServicesResult.data ?? [];
 
+  const nowIso = new Date().toISOString();
+  const { data: discountsData, error: discountsError } = await supabase
+    .from('platform_discounts')
+    .select(
+      'id, code, title, discount_type, discount_value, max_discount_amount, min_booking_amount, applies_to_service_type, first_booking_only, valid_until, is_active, valid_from',
+    )
+    .eq('is_active', true)
+    .lte('valid_from', nowIso)
+    .or(`valid_until.is.null,valid_until.gt.${nowIso}`)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (discountsError && discountsError.code !== '42P01') {
+    return NextResponse.json({ error: discountsError.message }, { status: 500 });
+  }
+
   const mergedServices = [
     ...providerServices.map((item) => ({
       id: item.id,
@@ -205,6 +234,18 @@ export async function GET(request: Request) {
     providers: providersResult.data ?? [],
     services: mergedServices,
     pets: petsResult.data ?? [],
+    discounts: ((discountsData ?? []) as Array<CatalogDiscount & { is_active: boolean; valid_from: string }>).map((item) => ({
+      id: item.id,
+      code: item.code,
+      title: item.title,
+      discount_type: item.discount_type,
+      discount_value: item.discount_value,
+      max_discount_amount: item.max_discount_amount,
+      min_booking_amount: item.min_booking_amount,
+      applies_to_service_type: item.applies_to_service_type,
+      first_booking_only: item.first_booking_only,
+      valid_until: item.valid_until,
+    })),
   }, {
     headers: {
       'Cache-Control': 'no-store, max-age=0',

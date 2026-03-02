@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import FadeInSection from './FadeInSection';
 import { services } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
@@ -28,9 +29,11 @@ export default function ServicesSection() {
                 <article className="group relative h-full overflow-hidden rounded-3xl border border-[#f0e4d7] bg-[#fffaf6] p-6 shadow-soft transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-coral/30 hover:shadow-[0_22px_40px_rgba(0,0,0,0.12)]">
                   <div className="pointer-events-none absolute inset-0" aria-hidden="true">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_84%_16%,rgba(227,154,93,0.18),transparent_42%),radial-gradient(circle_at_16%_88%,rgba(227,154,93,0.16),transparent_48%)]" />
-                    <img
+                    <Image
                       src={serviceBackgrounds[service.title] ?? '/Birthday/grooming_service.png'}
                       alt=""
+                      fill
+                      sizes="(max-width: 768px) 100vw, 25vw"
                       className="absolute inset-0 h-full w-full scale-[1.1] object-cover object-center opacity-[0.4] mix-blend-multiply saturate-[0.82] contrast-[0.92] brightness-[1.04] transition-all duration-300 group-hover:scale-[1.14] group-hover:opacity-[0.46]"
                     />
                     <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.28)_0%,rgba(255,255,255,0.4)_54%,rgba(255,255,255,0.56)_100%)]" />

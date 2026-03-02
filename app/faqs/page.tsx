@@ -15,7 +15,7 @@ const faqs = [
   },
   {
     question: 'Can I cancel or reschedule?',
-    answer: 'Yes, cancellation and rescheduling are supported under our refund and cancellation policy.',
+    answer: 'Yes, cancellation and rescheduling are supported under our cancellation and adjustment policy.',
   },
   {
     question: 'Do you support birthday event bookings?',

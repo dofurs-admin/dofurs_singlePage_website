@@ -1,9 +1,10 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Menu, X, UserRound, LayoutDashboard, PawPrint, LogOut, Settings } from 'lucide-react';
-import type { AuthChangeEvent, User } from '@supabase/supabase-js';
+import { Menu, X, UserRound, PawPrint, LogOut, Settings } from 'lucide-react';
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import { headerPageLinks, navItems } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
@@ -49,7 +50,7 @@ export default function Navbar() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session) => {
+    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (event === 'SIGNED_OUT') {
         setAuthUser(null);
         setProfilePhotoUrl(null);
@@ -213,7 +214,9 @@ export default function Navbar() {
                 aria-label="Open user profile menu"
               >
                 {profilePhotoUrl ? (
-                  <img src={profilePhotoUrl} alt="Profile" className="h-full w-full rounded-full object-cover" />
+                  <span className="relative block h-full w-full overflow-hidden rounded-full">
+                    <Image src={profilePhotoUrl} alt="Profile" fill sizes="40px" className="object-cover" />
+                  </span>
                 ) : (
                   initials
                 )}

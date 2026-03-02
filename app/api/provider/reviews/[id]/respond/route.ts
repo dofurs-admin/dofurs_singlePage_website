@@ -11,7 +11,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

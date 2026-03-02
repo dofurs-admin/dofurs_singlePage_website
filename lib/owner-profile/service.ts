@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { OwnerProfileDatabase } from '@/lib/supabase/owner-profile.database.types';
 import type {
   AddAddressInput,
   AddEmergencyContactInput,
@@ -16,7 +15,7 @@ import type {
   UserPreferences,
 } from './types';
 
-type OwnerProfileSupabaseClient = SupabaseClient<OwnerProfileDatabase>;
+type OwnerProfileSupabaseClient = SupabaseClient;
 
 const PROFILE_SELECT = '*';
 const ADDRESS_SELECT = '*';

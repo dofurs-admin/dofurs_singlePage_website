@@ -7,7 +7,7 @@ import { getCurrentUserRole, requireAuthenticatedUser } from '@/lib/auth/session
 export default async function CustomerBookingFormPage() {
   await requireAuthenticatedUser('/auth/sign-in?next=/forms/customer-booking');
   const role = await getCurrentUserRole();
-  const isStaffBooking = role === 'admin' || role === 'provider';
+  const isStaffBooking = role === 'admin' || role === 'staff' || role === 'provider';
 
   return (
     <ContentPageLayout

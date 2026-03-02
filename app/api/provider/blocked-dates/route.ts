@@ -15,7 +15,7 @@ export async function GET() {
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

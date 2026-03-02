@@ -206,8 +206,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     if (data.vaccinations) {
       for (const vaccination of data.vaccinations) {
-        if (vaccination._delete && vaccination.id) {
-          await deleteVaccination(supabase, user.id, vaccination.id);
+        if (vaccination._delete) {
+          if (vaccination.id) {
+            await deleteVaccination(supabase, user.id, vaccination.id);
+          }
           continue;
         }
 
@@ -244,8 +246,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     if (data.medicalRecords) {
       for (const medical of data.medicalRecords) {
-        if (medical._delete && medical.id) {
-          await deleteMedicalRecord(supabase, user.id, medical.id);
+        if (medical._delete) {
+          if (medical.id) {
+            await deleteMedicalRecord(supabase, user.id, medical.id);
+          }
           continue;
         }
 

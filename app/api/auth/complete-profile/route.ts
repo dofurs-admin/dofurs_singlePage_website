@@ -1,18 +1,6 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { getSupabaseServerClient } from '@/lib/supabase/server-client';
-
-const profileSchema = z.object({
-  name: z.string().trim().min(2).max(120),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^\+[1-9]\d{6,14}$/),
-  email: z.string().trim().email().max(200).optional(),
-  address: z.string().trim().min(5).max(300),
-  age: z.number().int().min(13).max(120),
-  gender: z.enum(['male', 'female', 'other']),
-});
+import { ownerProfileSchema } from '@/lib/flows/validation';
 
 export async function POST(request: Request) {
   const supabase = await getSupabaseServerClient();
@@ -26,7 +14,7 @@ export async function POST(request: Request) {
   }
 
   const payload = await request.json().catch(() => null);
-  const parsed = profileSchema.safeParse(payload);
+  const parsed = ownerProfileSchema.safeParse(payload);
 
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid profile payload', details: parsed.error.flatten() }, { status: 400 });

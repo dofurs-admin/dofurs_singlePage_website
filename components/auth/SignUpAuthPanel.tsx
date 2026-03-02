@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
 import { useToast } from '@/components/ui/ToastProvider';
+import type { FlowState } from '@/lib/flows/contracts';
 
 type SignUpStep = 'collect' | 'verify' | 'done';
 
@@ -97,6 +98,7 @@ export default function SignUpAuthPanel() {
   const [status, setStatus] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [flowState, setFlowState] = useState<FlowState>('collecting');
   const otpInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -132,6 +134,7 @@ export default function SignUpAuthPanel() {
     event.preventDefault();
     setError(null);
     setMessage(null);
+    setFlowState('validating');
     setStatus('Validating your details...');
 
     const normalizedName = name.trim();
@@ -143,17 +146,20 @@ export default function SignUpAuthPanel() {
 
     if (!normalizedName || !normalizedEmail || !normalizedPhone || !normalizedAddress || !normalizedGender || !age) {
       setStatus(null);
+      setFlowState('collecting');
       setError('Please enter all required details.');
       return;
     }
 
     if (!Number.isInteger(parsedAge) || parsedAge < 13 || parsedAge > 120) {
       setStatus(null);
+      setFlowState('collecting');
       setError('Age must be a whole number between 13 and 120.');
       return;
     }
 
     setIsPending(true);
+    setFlowState('submitting');
 
     try {
       const precheckResponse = await fetch('/api/auth/pre-signup', {
@@ -175,6 +181,7 @@ export default function SignUpAuthPanel() {
 
       if (!precheckResponse.ok) {
         setStatus(null);
+        setFlowState('error');
         setError(normalizeErrorMessage(precheckPayload.error));
         showToast('Sign up validation failed.', 'error');
         return;
@@ -213,6 +220,7 @@ export default function SignUpAuthPanel() {
         }
 
         setStatus(null);
+        setFlowState('error');
         setError(getReadableAuthError(resolvedMessage));
         showToast('Sign up failed. Check error details.', 'error');
         return;
@@ -222,11 +230,13 @@ export default function SignUpAuthPanel() {
       setStep('verify');
       setOtp('');
       setStatus(null);
+      setFlowState('ready');
       setMessage('6-digit OTP sent to your email. Enter it below to complete signup.');
       showToast('Verification email sent successfully.', 'success');
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : '';
       setStatus(null);
+      setFlowState('error');
       setError(message || 'Unable to process sign up right now. Please try again in a moment.');
       showToast('Could not send verification email.', 'error');
     } finally {
@@ -248,6 +258,7 @@ export default function SignUpAuthPanel() {
     }
 
     setIsPending(true);
+    setFlowState('submitting');
     setStatus('Verifying OTP...');
 
     try {
@@ -260,6 +271,7 @@ export default function SignUpAuthPanel() {
 
       if (verifyError) {
         setStatus(null);
+        setFlowState('error');
         setError(getReadableAuthError(verifyError.message));
         showToast('OTP verification failed.', 'error');
         return;
@@ -284,6 +296,7 @@ export default function SignUpAuthPanel() {
 
       if (!response.ok) {
         setStatus(null);
+        setFlowState('error');
         setError(normalizeErrorMessage(payload.error));
         showToast('Profile creation failed.', 'error');
         return;
@@ -293,10 +306,12 @@ export default function SignUpAuthPanel() {
 
       setStep('done');
       setStatus(null);
+      setFlowState('success');
       setMessage('Profile created successfully. You can now log in with your email OTP.');
       showToast('Sign up complete.', 'success');
     } catch {
       setStatus(null);
+      setFlowState('error');
       setError('Unable to verify OTP right now. Please try again.');
       showToast('OTP verification failed.', 'error');
     } finally {
@@ -325,6 +340,7 @@ export default function SignUpAuthPanel() {
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md sm:p-8">
         <h1 className="text-2xl font-bold text-ink">Create your account</h1>
         <p className="mt-2 text-sm text-[#6b6b6b]">Step {step === 'collect' ? '1' : step === 'verify' ? '2' : '3'} of 3</p>
+        <p className="mt-1 text-xs text-[#8a7b6f]">Flow state: {flowState}</p>
 
         {step === 'collect' && (
           <form onSubmit={handleSendOtp} className="mt-6 space-y-4">
@@ -493,6 +509,7 @@ export default function SignUpAuthPanel() {
                 setMessage(null);
                 setError(null);
                 setStatus(null);
+                setFlowState('collecting');
               }}
               className="inline-flex w-full items-center justify-center rounded-full border border-[#f2dfcf] bg-[#fffaf6] px-5 py-3 text-sm font-semibold text-[#6b6b6b] transition hover:bg-white"
             >

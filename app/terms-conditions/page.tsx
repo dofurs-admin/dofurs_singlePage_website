@@ -39,7 +39,7 @@ export default function TermsConditionsPage() {
         <li>Bookings are confirmed only after confirmation notification from Dofurs.</li>
         <li>Rescheduling should be requested at least 2 hours before service and is subject to availability.</li>
         <li>Up to 2 reschedules per booking are allowed; later requests may be treated as cancellation.</li>
-        <li>Refund/cancellation outcomes follow the published refund policy.</li>
+        <li>Cancellation and adjustment outcomes follow the published cancellation and adjustment policy.</li>
       </ul>
 
       <h2 className="mt-4 text-2xl font-semibold text-ink">5. Payments and Charges</h2>

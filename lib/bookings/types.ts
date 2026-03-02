@@ -41,7 +41,7 @@ export type BookingRecord = {
 export type CreateBookingInput = {
   petId: number;
   providerId: number;
-  providerServiceId: string;
+  providerServiceId?: string | null;
   bookingDate: string;
   startTime: string;
   bookingMode: BookingMode;
@@ -49,6 +49,12 @@ export type CreateBookingInput = {
   latitude?: number | null;
   longitude?: number | null;
   providerNotes?: string | null;
+  bookingType?: 'service' | 'package';
+  packageId?: string | null;
+  discountCode?: string;
+  discountAmount?: number;
+  finalPrice?: number;
+  addOns?: Array<{ id: string; quantity: number }>;
 };
 
 export type GetAvailableSlotsInput = {

@@ -10,7 +10,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

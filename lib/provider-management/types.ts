@@ -193,6 +193,101 @@ export type AdminProviderServiceRolloutInput = Array<
   }
 >;
 
+export type AdminServiceModerationSummaryItem = {
+  service_type: string;
+  provider_count: number;
+  active_count: number;
+  inactive_count: number;
+  average_base_price: number;
+};
+
+export type AdminServiceGlobalRolloutInput = {
+  service_type: string;
+  base_price: number;
+  surge_price?: number | null;
+  commission_percentage?: number | null;
+  service_duration_minutes?: number | null;
+  is_active?: boolean;
+  service_pincodes?: string[];
+  provider_ids?: number[];
+  overwrite_existing?: boolean;
+};
+
+export type AdminServiceGlobalToggleInput = {
+  service_type: string;
+  is_active: boolean;
+};
+
+export type DiscountType = 'percentage' | 'flat';
+
+export type PlatformDiscount = {
+  id: string;
+  code: string;
+  title: string;
+  description: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount: number | null;
+  min_booking_amount: number | null;
+  applies_to_service_type: string | null;
+  valid_from: string;
+  valid_until: string | null;
+  usage_limit_total: number | null;
+  usage_limit_per_user: number | null;
+  first_booking_only: boolean;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlatformDiscountAnalyticsItem = {
+  discount_id: string;
+  code: string;
+  title: string;
+  redemption_count: number;
+  total_discount_amount: number;
+};
+
+export type PlatformDiscountAnalyticsSummary = {
+  total_discounts: number;
+  total_active_discounts: number;
+  total_redemptions: number;
+  total_discount_amount: number;
+  total_bookings: number;
+  booking_redemption_rate: number;
+  top_discounts: PlatformDiscountAnalyticsItem[];
+};
+
+export type DiscountRedemption = {
+  id: string;
+  discount_id: string;
+  booking_id: number | null;
+  user_id: string | null;
+  discount_amount: number;
+  reversed_at: string | null;
+  reversal_reason: string | null;
+  created_at: string;
+};
+
+export type AdminUpsertDiscountInput = {
+  id?: string;
+  code: string;
+  title: string;
+  description?: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount?: number | null;
+  min_booking_amount?: number | null;
+  applies_to_service_type?: string | null;
+  valid_from: string;
+  valid_until?: string | null;
+  usage_limit_total?: number | null;
+  usage_limit_per_user?: number | null;
+  first_booking_only?: boolean;
+  is_active?: boolean;
+};
+
 export type SetAvailabilityInput = Array<
   Pick<ProviderAvailability, 'day_of_week' | 'start_time' | 'end_time'> & {
     id?: string;
@@ -239,6 +334,21 @@ export type ProviderDetailsUpdateInput = {
   clinicDetails?: UpdateProviderClinicDetailsInput;
 };
 
+export type AdminProviderLocationModeration = {
+  provider_id: number;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  service_radius_km: number | null;
+};
+
+export type UpdateAdminProviderLocationInput = Partial<
+  Pick<AdminProviderLocationModeration, 'address' | 'city' | 'state' | 'pincode' | 'latitude' | 'longitude' | 'service_radius_km'>
+>;
+
 export type ProviderReviewsQuery = {
   page?: number;
   pageSize?: number;
@@ -263,6 +373,13 @@ export type AdminProviderModerationItem = {
   account_status: ProviderAccountStatus;
   average_rating: number;
   total_bookings: number;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  service_radius_km: number | null;
   created_at: string;
   updated_at: string;
   documentCounts: {

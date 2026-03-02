@@ -1,22 +1,10 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { createBooking } from '@/lib/bookings/service';
 import { getApiAuthContext, forbidden, unauthorized } from '@/lib/auth/api-auth';
 import { getProviderIdByUserId } from '@/lib/provider-management/api';
-
-const bookingSchema = z.object({
-  petId: z.number().int().positive(),
-  providerId: z.number().int().positive(),
-  providerServiceId: z.string().uuid(),
-  bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  bookingMode: z.enum(['home_visit', 'clinic_visit', 'teleconsult']),
-  locationAddress: z.string().trim().max(1000).nullable().optional(),
-  latitude: z.number().min(-90).max(90).nullable().optional(),
-  longitude: z.number().min(-180).max(180).nullable().optional(),
-  providerNotes: z.string().trim().max(2000).nullable().optional(),
-  bookingUserId: z.string().uuid().optional(),
-});
+import { bookingCreateSchema } from '@/lib/flows/validation';
+import { toFriendlyApiError } from '@/lib/api/errors';
+import { assertRoleCanCreateBookingForUser } from '@/lib/bookings/state-transition-guard';
 
 export async function POST(request: Request) {
   const { supabase, user, role } = await getApiAuthContext();
@@ -26,7 +14,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const parsed = bookingSchema.safeParse(body);
+  const parsed = bookingCreateSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid booking payload', details: parsed.error.flatten() }, { status: 400 });
@@ -34,7 +22,9 @@ export async function POST(request: Request) {
 
   const targetUserId = parsed.data.bookingUserId ?? user.id;
 
-  if (targetUserId !== user.id && role !== 'admin' && role !== 'provider') {
+  try {
+    assertRoleCanCreateBookingForUser(role as 'user' | 'provider' | 'admin' | 'staff', user.id, targetUserId);
+  } catch {
     return forbidden();
   }
 
@@ -47,27 +37,30 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { bookingUserId: _bookingUserId, ...bookingInput } = parsed.data;
+    const bookingInput = {
+      petId: parsed.data.petId,
+      providerId: parsed.data.providerId,
+      providerServiceId: parsed.data.bookingType === 'service' ? parsed.data.providerServiceId : undefined,
+      bookingDate: parsed.data.bookingDate,
+      startTime: parsed.data.startTime,
+      bookingMode: parsed.data.bookingMode,
+      locationAddress: parsed.data.locationAddress,
+      latitude: parsed.data.latitude,
+      longitude: parsed.data.longitude,
+      providerNotes: parsed.data.providerNotes,
+      bookingType: parsed.data.bookingType ?? 'service',
+      packageId: parsed.data.bookingType === 'package' ? parsed.data.packageId : undefined,
+      discountCode: parsed.data.discountCode,
+      discountAmount: parsed.data.bookingType === 'package' ? parsed.data.discountAmount : undefined,
+      finalPrice: parsed.data.bookingType === 'package' ? parsed.data.finalPrice : undefined,
+      addOns: parsed.data.addOns,
+    };
+
     const booking = await createBooking(supabase, targetUserId, bookingInput);
+
     return NextResponse.json({ success: true, booking });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Booking failed';
-
-    if (message.includes('BOOKING_OVERLAP')) {
-      return NextResponse.json({ error: 'Selected time slot is no longer available.' }, { status: 409 });
-    }
-
-    if (message.includes('PET_OWNERSHIP_INVALID')) {
-      return NextResponse.json({ error: 'Pet does not belong to this user.' }, { status: 403 });
-    }
-
-    if (message.includes('HOME_VISIT_LOCATION_REQUIRED')) {
-      return NextResponse.json(
-        { error: 'Home visit bookings require address and geo coordinates.' },
-        { status: 400 },
-      );
-    }
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Booking failed');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

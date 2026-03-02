@@ -14,7 +14,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -41,7 +41,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -60,9 +60,20 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   }
 
   try {
-    const services = await updateProviderServiceRollout(supabase, providerId, parsed.data);
+    const normalizedRollout = parsed.data.map((item) => ({
+      id: item.id,
+      service_type: item.service_type,
+      base_price: item.base_price,
+      surge_price: item.surge_price ?? null,
+      commission_percentage: item.commission_percentage ?? null,
+      service_duration_minutes: item.service_duration_minutes ?? null,
+      is_active: item.is_active ?? true,
+      service_pincodes: item.service_pincodes,
+    }));
+
+    const services = await updateProviderServiceRollout(supabase, providerId, normalizedRollout);
     await logProviderAdminAuditEvent(supabase, user.id, providerId, 'provider.services_rollout_updated', {
-      updatedRows: parsed.data.length,
+      updatedRows: normalizedRollout.length,
     });
     return NextResponse.json({ success: true, services });
   } catch (error) {

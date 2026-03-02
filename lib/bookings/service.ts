@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getProviderIdByUserId } from '@/lib/provider-management/api';
+import { reverseDiscountRedemptionForBooking } from './discounts';
+import { resolveAvailableSlots } from './engines/slotEngine';
+import { assertBookingStateTransition } from './state-transition-guard';
 import type {
   BookingRecord,
   BookingStatus,
-  BookableSlot,
   CreateBookingInput,
   GetAvailableSlotsInput,
   OverrideBookingInput,
@@ -13,30 +15,18 @@ import type {
 const BOOKING_SELECT =
   'id, user_id, pet_id, provider_id, provider_service_id, service_type, booking_date, start_time, end_time, booking_mode, location_address, latitude, longitude, booking_status, cancellation_reason, cancellation_by, price_at_booking, admin_price_reference, provider_notes, internal_notes, payment_mode, platform_fee, provider_payout_status, created_at, updated_at';
 
-const PROVIDER_STATUS_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
-  pending: ['confirmed', 'cancelled'],
-  confirmed: ['completed', 'cancelled', 'no_show'],
-  completed: [],
-  cancelled: [],
-  no_show: [],
-};
-
 function assertProviderTransition(current: BookingStatus, next: BookingStatus) {
-  if (!PROVIDER_STATUS_TRANSITIONS[current].includes(next)) {
-    throw new Error(`Invalid status transition: ${current} -> ${next}`);
-  }
-}
-
-function toTimeValue(value: string) {
-  return value.length >= 5 ? value.slice(0, 5) : value;
+  assertBookingStateTransition(current, next);
 }
 
 export async function createBooking(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
-  const { data, error } = await supabase.rpc('create_booking_v2', {
+  const { data, error } = await supabase.rpc('create_booking_transactional_v1', {
     p_user_id: userId,
     p_pet_id: input.petId,
     p_provider_id: input.providerId,
-    p_provider_service_id: input.providerServiceId,
+    p_provider_service_id: input.providerServiceId ?? null,
+    p_booking_type: input.bookingType ?? 'service',
+    p_package_id: input.packageId ?? null,
     p_booking_date: input.bookingDate,
     p_start_time: input.startTime,
     p_booking_mode: input.bookingMode,
@@ -45,6 +35,10 @@ export async function createBooking(supabase: SupabaseClient, userId: string, in
     p_longitude: input.longitude ?? null,
     p_provider_notes: input.providerNotes ?? null,
     p_payment_mode: 'direct_to_provider',
+    p_discount_code: input.discountCode ?? null,
+    p_discount_amount: input.discountAmount ?? null,
+    p_final_price: input.finalPrice ?? null,
+    p_add_ons: input.addOns ?? [],
   });
 
   if (error) {
@@ -87,27 +81,13 @@ export async function cancelBooking(supabase: SupabaseClient, userId: string, bo
     throw error;
   }
 
+  await reverseDiscountRedemptionForBooking(bookingId, cancellationReason ?? 'cancelled_by_user');
+
   return data;
 }
 
 export async function getAvailableSlots(supabase: SupabaseClient, input: GetAvailableSlotsInput) {
-  const { data, error } = await supabase.rpc('get_available_slots', {
-    p_provider_id: input.providerId,
-    p_booking_date: input.bookingDate,
-    p_service_duration_minutes: input.serviceDurationMinutes ?? 30,
-  });
-
-  if (error) {
-    throw error;
-  }
-
-  const slots = ((data ?? []) as BookableSlot[]).map((slot) => ({
-    ...slot,
-    start_time: toTimeValue(slot.start_time),
-    end_time: toTimeValue(slot.end_time),
-  }));
-
-  return slots;
+  return resolveAvailableSlots(supabase, input);
 }
 
 export async function getProviderBookings(supabase: SupabaseClient, providerUserId: string, query: ProviderBookingsQuery = {}) {
@@ -189,6 +169,10 @@ async function providerUpdateBookingStatus(
     throw error;
   }
 
+  if (nextStatus === 'cancelled') {
+    await reverseDiscountRedemptionForBooking(bookingId, 'cancelled_by_provider');
+  }
+
   return data;
 }
 
@@ -210,6 +194,18 @@ export async function updateBookingStatus(
   nextStatus: BookingStatus,
   options?: { cancellationBy?: 'user' | 'provider' | 'admin'; cancellationReason?: string | null },
 ) {
+  const { data: currentBooking, error: currentBookingError } = await supabase
+    .from('bookings')
+    .select('id, booking_status')
+    .eq('id', bookingId)
+    .single<{ id: number; booking_status: BookingStatus }>();
+
+  if (currentBookingError || !currentBooking) {
+    throw currentBookingError ?? new Error('Booking not found');
+  }
+
+  assertBookingStateTransition(currentBooking.booking_status, nextStatus);
+
   const { data, error } = await supabase
     .from('bookings')
     .update({
@@ -224,6 +220,10 @@ export async function updateBookingStatus(
 
   if (error) {
     throw error;
+  }
+
+  if (nextStatus === 'cancelled') {
+    await reverseDiscountRedemptionForBooking(bookingId, options?.cancellationReason ?? 'cancelled_by_admin_or_provider');
   }
 
   return data;
@@ -257,6 +257,10 @@ export async function overrideBooking(supabase: SupabaseClient, bookingId: numbe
 
   if (error) {
     throw error;
+  }
+
+  if (patch.bookingStatus === 'cancelled') {
+    await reverseDiscountRedemptionForBooking(bookingId, patch.cancellationReason ?? 'cancelled_via_override');
   }
 
   return data;
@@ -299,4 +303,40 @@ export async function manualAssignProvider(
   }
 
   return data;
+}
+
+export async function processAdminCancellationAdjustment(
+  supabase: SupabaseClient,
+  actorId: string,
+  bookingId: number,
+  input?: {
+    reason?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const booking = await updateBookingStatus(supabase, bookingId, 'cancelled', {
+    cancellationBy: 'admin',
+    cancellationReason: input?.reason ?? 'Cancelled by admin',
+  });
+
+  await reverseDiscountRedemptionForBooking(bookingId, input?.reason ?? 'cancelled_by_admin');
+
+  const { error: adjustmentLogError } = await supabase.from('booking_adjustment_events').insert({
+    booking_id: bookingId,
+    actor_id: actorId,
+    adjustment_amount: null,
+    adjustment_type: 'cancellation_adjustment',
+    reason: input?.reason ?? null,
+    metadata: {
+      payment_collection_mode: 'direct_to_provider',
+      adjustment_type: 'cancellation_with_discount_reversal',
+      ...(input?.metadata ?? {}),
+    },
+  });
+
+  if (adjustmentLogError && adjustmentLogError.code !== '42P01') {
+    throw adjustmentLogError;
+  }
+
+  return booking;
 }

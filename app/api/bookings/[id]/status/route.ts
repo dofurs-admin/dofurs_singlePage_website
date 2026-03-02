@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
 import { cancelBooking, confirmBooking, completeBooking, markNoShow, updateBookingStatus } from '@/lib/bookings/service';
-
-const statusSchema = z.object({
-  status: z.enum(['pending', 'confirmed', 'completed', 'cancelled', 'no_show']),
-  providerNotes: z.string().trim().max(2000).optional(),
-  cancellationReason: z.string().trim().max(2000).optional(),
-});
+import { type BookingStatus } from '@/lib/flows/contracts';
+import { bookingStatusUpdateSchema } from '@/lib/flows/validation';
+import { assertBookingStateTransition, assertRoleCanSetBookingStatus, type BookingActorRole } from '@/lib/bookings/state-transition-guard';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { role, supabase, user } = await getApiAuthContext();
@@ -24,7 +21,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   const payload = await request.json().catch(() => null);
-  const parsed = statusSchema.safeParse(payload);
+  const parsed = bookingStatusUpdateSchema.safeParse(payload);
 
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
@@ -44,7 +41,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return forbidden();
   }
 
+  const effectiveRole = role as BookingActorRole;
+
+  const currentStatus = booking.booking_status as BookingStatus;
+  const nextStatus = parsed.data.status as BookingStatus;
+
   try {
+    assertRoleCanSetBookingStatus(effectiveRole, nextStatus);
+    assertBookingStateTransition(currentStatus, nextStatus);
+
     if (role === 'user') {
       if (parsed.data.status !== 'cancelled') {
         return NextResponse.json({ error: 'Users can only cancel their own bookings' }, { status: 403 });
@@ -81,7 +86,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return NextResponse.json({ error: 'Providers can set only confirmed/completed/no_show/cancelled.' }, { status: 403 });
     }
 
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'staff') {
       const data = await updateBookingStatus(supabase, bookingId, parsed.data.status, {
         cancellationBy: parsed.data.status === 'cancelled' ? 'admin' : undefined,
         cancellationReason: parsed.data.cancellationReason,
@@ -91,7 +96,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     return forbidden();
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to update booking';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to update booking');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

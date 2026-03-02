@@ -10,7 +10,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -29,9 +29,19 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   }
 
   try {
-    const pricing = await updateProviderPricing(supabase, providerId, parsed.data);
+    const normalizedPricing = parsed.data.map((item) => ({
+      id: item.id,
+      service_type: item.service_type,
+      base_price: item.base_price,
+      surge_price: item.surge_price ?? null,
+      commission_percentage: item.commission_percentage ?? null,
+      service_duration_minutes: item.service_duration_minutes ?? null,
+      is_active: item.is_active ?? true,
+    }));
+
+    const pricing = await updateProviderPricing(supabase, providerId, normalizedPricing);
     await logProviderAdminAuditEvent(supabase, user.id, providerId, 'provider.pricing_updated', {
-      updatedRows: parsed.data.length,
+      updatedRows: normalizedPricing.length,
     });
     return NextResponse.json({ success: true, pricing });
   } catch (error) {

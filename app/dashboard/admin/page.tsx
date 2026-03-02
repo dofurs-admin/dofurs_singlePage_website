@@ -1,10 +1,36 @@
 import AdminDashboardClient from '@/components/dashboard/AdminDashboardClient';
 import { requireAuthenticatedUser, requireRole } from '@/lib/auth/session';
-import { listAdminProviderModerationItems } from '@/lib/provider-management/service';
+import {
+  getAdminServiceModerationSummary,
+  getPlatformDiscountAnalytics,
+  listAdminProviderModerationItems,
+  listPlatformDiscounts,
+} from '@/lib/provider-management/service';
 
-export default async function AdminDashboardPage() {
+type AdminDashboardView = 'overview' | 'operations' | 'access' | 'services';
+
+type AdminDashboardPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+function resolveAdminDashboardView(value: string | string[] | undefined): AdminDashboardView {
+  const resolvedValue = Array.isArray(value) ? value[0] : value;
+
+  switch (resolvedValue) {
+    case 'operations':
+    case 'access':
+    case 'services':
+      return resolvedValue;
+    default:
+      return 'overview';
+  }
+}
+
+export default async function AdminDashboardPage({ searchParams }: AdminDashboardPageProps) {
   await requireAuthenticatedUser();
-  await requireRole(['admin']);
+  const role = await requireRole(['admin', 'staff']);
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const view = resolveAdminDashboardView(resolvedSearchParams?.view);
 
   const { supabase } = await requireAuthenticatedUser();
 
@@ -16,6 +42,11 @@ export default async function AdminDashboardPage() {
     providerAvailabilityResult,
     providerServicesResult,
     providerServicePincodesResult,
+    serviceModerationSummary,
+    platformDiscounts,
+    discountAnalytics,
+    serviceCategoriesResult,
+    servicePackagesResult,
   ] = await Promise.all([
     supabase
       .from('bookings')
@@ -45,10 +76,23 @@ export default async function AdminDashboardPage() {
       .from('provider_service_pincodes')
       .select('provider_service_id, pincode, is_enabled')
       .limit(10000),
+    getAdminServiceModerationSummary(supabase),
+    listPlatformDiscounts(supabase),
+    getPlatformDiscountAnalytics(supabase),
+    supabase
+      .from('service_categories')
+      .select('*')
+      .order('display_order', { ascending: true }),
+    supabase
+      .from('service_packages')
+      .select('*')
+      .order('display_order', { ascending: true }),
   ]);
 
   return (
     <AdminDashboardClient
+      canManageUserAccess={role === 'admin'}
+      view={view}
       initialBookings={bookingsResult.data ?? []}
       providers={providersResult.data ?? []}
       moderationProviders={moderationProviders}
@@ -56,6 +100,11 @@ export default async function AdminDashboardPage() {
       initialAvailability={providerAvailabilityResult.data ?? []}
       initialServices={providerServicesResult.data ?? []}
       initialServicePincodes={providerServicePincodesResult.data ?? []}
+      initialServiceSummary={serviceModerationSummary}
+      initialDiscounts={platformDiscounts}
+      initialDiscountAnalytics={discountAnalytics}
+      initialServiceCategories={serviceCategoriesResult.data ?? []}
+      initialServicePackages={servicePackagesResult.data ?? []}
     />
   );
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
@@ -165,13 +166,17 @@ export default function UserSettingsClient({ initialProfile }: { initialProfile:
 
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-lg font-semibold text-ink">Profile Settings</h2>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex items-center gap-3">
           {profilePhotoPreview || persistedPhotoSignedUrl ? (
-            <img
-              src={profilePhotoPreview ?? persistedPhotoSignedUrl ?? ''}
-              alt="Profile"
-              className="h-16 w-16 rounded-full object-cover"
-            />
+            <div className="relative h-16 w-16 overflow-hidden rounded-full">
+              <Image
+                src={profilePhotoPreview ?? persistedPhotoSignedUrl ?? ''}
+                alt="Profile"
+                fill
+                sizes="64px"
+                className="object-cover"
+              />
+            </div>
           ) : (
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#fff2e7] text-sm font-semibold text-ink">
               {(profile.name ?? 'U').slice(0, 1).toUpperCase()}

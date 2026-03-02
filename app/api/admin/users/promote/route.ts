@@ -3,7 +3,7 @@ import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth'
 
 type PromoteUserPayload = {
   email?: string;
-  role?: 'admin' | 'provider';
+  role?: 'admin' | 'provider' | 'staff';
 };
 
 export async function POST(request: Request) {
@@ -19,7 +19,8 @@ export async function POST(request: Request) {
 
   const payload = (await request.json().catch(() => null)) as PromoteUserPayload | null;
   const normalizedEmail = payload?.email?.trim().toLowerCase() ?? '';
-  const targetRoleName = payload?.role === 'provider' ? 'provider' : 'admin';
+  const targetRoleName =
+    payload?.role === 'provider' ? 'provider' : payload?.role === 'staff' ? 'staff' : 'admin';
 
   if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     return NextResponse.json({ error: 'Valid email is required' }, { status: 400 });

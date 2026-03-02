@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server-client';
 
-export type AppRole = 'user' | 'provider' | 'admin';
+export type AppRole = 'user' | 'provider' | 'admin' | 'staff';
 
 export async function getApiAuthContext() {
   const supabase = await getSupabaseServerClient();

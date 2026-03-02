@@ -10,7 +10,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return unauthorized();
   }
 
-  if (role !== 'provider' && role !== 'admin') {
+  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

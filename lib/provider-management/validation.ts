@@ -141,6 +141,135 @@ export const adminProviderServiceRolloutItemSchema = providerPricingItemSchema.e
 
 export const adminProviderServiceRolloutSchema = z.array(adminProviderServiceRolloutItemSchema).min(1);
 
+export const adminServiceGlobalToggleSchema = z.object({
+  service_type: z.string().trim().min(1).max(120),
+  is_active: z.boolean(),
+});
+
+export const adminServiceGlobalRolloutSchema = z.object({
+  service_type: z.string().trim().min(1).max(120),
+  base_price: z.number().min(0),
+  surge_price: z.number().min(0).nullable().optional(),
+  commission_percentage: z.number().min(0).max(100).nullable().optional(),
+  service_duration_minutes: z.number().int().positive().nullable().optional(),
+  is_active: z.boolean().optional(),
+  service_pincodes: z.array(indianPincodeSchema).max(200).optional(),
+  provider_ids: z.array(z.number().int().positive()).max(2000).optional(),
+  overwrite_existing: z.boolean().optional(),
+});
+
+export const adminProviderLocationUpdateSchema = z
+  .object({
+    address: z.string().trim().max(500).nullable().optional(),
+    city: z.string().trim().max(120).nullable().optional(),
+    state: z.string().trim().max(120).nullable().optional(),
+    pincode: indianPincodeSchema.nullable().optional(),
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    service_radius_km: z.number().min(0).max(500).nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required.',
+  })
+  .superRefine((value, context) => {
+    const hasLatitude = Object.prototype.hasOwnProperty.call(value, 'latitude');
+    const hasLongitude = Object.prototype.hasOwnProperty.call(value, 'longitude');
+
+    if (hasLatitude !== hasLongitude) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'latitude and longitude must be provided together.',
+        path: hasLatitude ? ['longitude'] : ['latitude'],
+      });
+    }
+
+    const coordinatesProvided = value.latitude !== null && value.latitude !== undefined;
+
+    if (coordinatesProvided) {
+      const hasAddress = typeof value.address === 'string' && value.address.trim().length > 0;
+      const hasCity = typeof value.city === 'string' && value.city.trim().length > 0;
+      const hasState = typeof value.state === 'string' && value.state.trim().length > 0;
+      const hasPincode = typeof value.pincode === 'string' && value.pincode.trim().length > 0;
+
+      if (!hasAddress || !hasCity || !hasState || !hasPincode) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'address, city, state, and pincode are required when coordinates are provided.',
+          path: ['address'],
+        });
+      }
+    }
+  });
+
+export const discountTypeSchema = z.enum(['percentage', 'flat']);
+
+const adminDiscountBaseSchema = z.object({
+  id: z.string().uuid().optional(),
+  code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/),
+  title: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(1000).nullable().optional(),
+  discount_type: discountTypeSchema,
+  discount_value: z.number().positive(),
+  max_discount_amount: z.number().positive().nullable().optional(),
+  min_booking_amount: z.number().min(0).nullable().optional(),
+  applies_to_service_type: z.string().trim().min(1).max(120).nullable().optional(),
+  valid_from: z.string().datetime(),
+  valid_until: z.string().datetime().nullable().optional(),
+  usage_limit_total: z.number().int().positive().nullable().optional(),
+  usage_limit_per_user: z.number().int().positive().nullable().optional(),
+  first_booking_only: z.boolean().optional(),
+  is_active: z.boolean().optional(),
+});
+
+export const adminDiscountUpsertSchema = adminDiscountBaseSchema
+  .superRefine((value, context) => {
+    if (value.discount_type === 'percentage' && value.discount_value > 100) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Percentage discount cannot exceed 100.',
+        path: ['discount_value'],
+      });
+    }
+
+    if (value.valid_until && new Date(value.valid_until).getTime() <= new Date(value.valid_from).getTime()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'valid_until must be later than valid_from.',
+        path: ['valid_until'],
+      });
+    }
+  });
+
+export const adminDiscountPatchSchema = adminDiscountBaseSchema
+  .partial()
+  .omit({ code: true })
+  .superRefine((value, context) => {
+    if (
+      value.discount_type === 'percentage' &&
+      value.discount_value !== undefined &&
+      value.discount_value > 100
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Percentage discount cannot exceed 100.',
+        path: ['discount_value'],
+      });
+    }
+
+    if (value.valid_from && value.valid_until) {
+      if (new Date(value.valid_until).getTime() <= new Date(value.valid_from).getTime()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'valid_until must be later than valid_from.',
+          path: ['valid_until'],
+        });
+      }
+    }
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required.',
+  });
+
 export const verifyDocumentSchema = z.object({
   verificationStatus: z.enum(['pending', 'approved', 'rejected']),
 });

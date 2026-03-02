@@ -1,5 +1,7 @@
 'use client';
+'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
@@ -32,18 +34,22 @@ type Booking = {
   payment_mode: string | null;
 };
 
+type UserDashboardView = 'overview' | 'operations' | 'profile';
+
 export default function UserDashboardClient({
   initialPets,
   initialBookings,
+  view = 'overview',
 }: {
   initialPets: Pet[];
   initialBookings: Booking[];
+  view?: UserDashboardView;
 }) {
-  const [pets, setPets] = useState(initialPets);
+  const [pets] = useState(initialPets);
   const [bookings, setBookings] = useState(initialBookings);
   const [petPhotoUrls, setPetPhotoUrls] = useState<Record<number, string>>({});
   const [bookingFilter, setBookingFilter] = useState<'all' | 'active' | 'history'>('all');
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const { showToast } = useToast();
 
   const bookingCounts = useMemo(() => {
@@ -173,6 +179,39 @@ export default function UserDashboardClient({
 
   return (
     <div className="grid gap-5">
+      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-4 shadow-soft-md">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">User Dashboard</h2>
+            <p className="mt-1 text-xs text-[#6b6b6b]">Overview stays focused on bookings and stats; management sections open from dedicated buttons.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'operations', label: 'Operations' },
+              { id: 'profile', label: 'Profile' },
+            ].map((item) => {
+              const isActive = view === item.id;
+
+              return (
+                <Link
+                  key={item.id}
+                  href={item.id === 'overview' ? '/dashboard/user' : `/dashboard/user?view=${item.id}`}
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                    isActive
+                      ? 'border-[#f2dfcf] bg-[#fff7f0] text-ink'
+                      : 'border-[#f2dfcf] bg-white text-[#6b6b6b] hover:text-ink'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {view === 'overview' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <h2 className="text-xl font-semibold text-ink">Notification Center</h2>
         <ul className="mt-4 grid gap-2 text-sm">
@@ -192,7 +231,9 @@ export default function UserDashboardClient({
           ))}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'operations' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <h2 className="text-center text-xl font-semibold text-ink">Book Service Now</h2>
         <p className="mt-2 text-center text-sm text-[#6b6b6b]">
@@ -207,7 +248,9 @@ export default function UserDashboardClient({
           </Link>
         </div>
       </section>
+      ) : null}
 
+      {view === 'overview' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <h2 className="text-xl font-semibold text-ink">Booking Insights</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
@@ -216,7 +259,9 @@ export default function UserDashboardClient({
           <div className="rounded-xl border border-[#f2dfcf] p-3">No-show: {bookings.filter((booking) => booking.status === 'no_show').length}</div>
         </div>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section id="pets" className="scroll-mt-24 rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl font-semibold text-ink">Pet Profiles</h2>
@@ -237,11 +282,15 @@ export default function UserDashboardClient({
             pets.map((pet) => (
               <li key={pet.id} className="rounded-2xl border border-[#f2dfcf] bg-[#fffdfa] p-4 text-sm shadow-sm">
                 {petPhotoUrls[pet.id] ? (
-                  <img
-                    src={petPhotoUrls[pet.id]}
-                    alt={`${pet.name} photo`}
-                    className="mb-3 h-36 w-full rounded-xl object-cover"
-                  />
+                  <div className="relative mb-3 h-36 w-full overflow-hidden rounded-xl">
+                    <Image
+                      src={petPhotoUrls[pet.id]}
+                      alt={`${pet.name} photo`}
+                      fill
+                      sizes="(max-width: 768px) 100vw, 33vw"
+                      className="object-cover"
+                    />
+                  </div>
                 ) : null}
                 <div className="text-base font-semibold text-ink">{pet.name}</div>
                 <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#6b6b6b]">
@@ -256,7 +305,9 @@ export default function UserDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'overview' || view === 'operations' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md transition-all duration-300 ease-out hover:-translate-y-0.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold text-ink">Bookings</h2>
@@ -321,7 +372,9 @@ export default function UserDashboardClient({
           )}
         </ul>
       </section>
+      ) : null}
 
+      {view === 'profile' ? (
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-ink">Add New Pet</h2>
@@ -336,6 +389,7 @@ export default function UserDashboardClient({
           Create pet profiles using the full passport form (medical, behavior, feeding, grooming, and emergency details).
         </p>
       </section>
+      ) : null}
     </div>
   );
 }

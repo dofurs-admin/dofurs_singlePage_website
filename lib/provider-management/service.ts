@@ -1,9 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
+  AdminProviderLocationModeration,
+  AdminServiceGlobalRolloutInput,
+  AdminServiceGlobalToggleInput,
+  AdminServiceModerationSummaryItem,
+  AdminUpsertDiscountInput,
   AdminProviderModerationItem,
   CreateProviderDocumentInput,
   CreateProviderInput,
   DocumentVerificationStatus,
+  PlatformDiscount,
+  PlatformDiscountAnalyticsSummary,
   ProviderDetailsUpdateInput,
   Provider,
   AdminProviderServiceRolloutInput,
@@ -14,6 +21,7 @@ import type {
   SetAvailabilityInput,
   UpdateProviderDocumentInput,
   UpdateProviderProfessionalDetailsInput,
+  UpdateAdminProviderLocationInput,
   UpdateProviderClinicDetailsInput,
   UpdateProviderPricingInput,
   UpdateProviderProfileInput,
@@ -555,6 +563,396 @@ export async function updateProviderServiceRollout(
   return getProviderServicesWithPincodes(supabase, providerId);
 }
 
+export async function getAdminServiceModerationSummary(
+  supabase: SupabaseClient,
+): Promise<AdminServiceModerationSummaryItem[]> {
+  const { data, error } = await supabase
+    .from('provider_services')
+    .select('service_type, provider_id, is_active, base_price')
+    .order('service_type', { ascending: true })
+    .limit(10000);
+
+  if (error) {
+    throw error;
+  }
+
+  const summaryByType = new Map<
+    string,
+    {
+      service_type: string;
+      providers: Set<number>;
+      active_count: number;
+      inactive_count: number;
+      base_price_sum: number;
+      base_price_count: number;
+    }
+  >();
+
+  for (const row of data ?? []) {
+    const key = row.service_type.trim().toLowerCase();
+    const current =
+      summaryByType.get(key) ??
+      {
+        service_type: row.service_type,
+        providers: new Set<number>(),
+        active_count: 0,
+        inactive_count: 0,
+        base_price_sum: 0,
+        base_price_count: 0,
+      };
+
+    current.providers.add(row.provider_id);
+
+    if (row.is_active) {
+      current.active_count += 1;
+    } else {
+      current.inactive_count += 1;
+    }
+
+    if (typeof row.base_price === 'number') {
+      current.base_price_sum += row.base_price;
+      current.base_price_count += 1;
+    }
+
+    summaryByType.set(key, current);
+  }
+
+  return Array.from(summaryByType.values())
+    .map((item) => ({
+      service_type: item.service_type,
+      provider_count: item.providers.size,
+      active_count: item.active_count,
+      inactive_count: item.inactive_count,
+      average_base_price:
+        item.base_price_count > 0 ? Number((item.base_price_sum / item.base_price_count).toFixed(2)) : 0,
+    }))
+    .sort((a, b) => a.service_type.localeCompare(b.service_type));
+}
+
+export async function setAdminServiceActivation(
+  supabase: SupabaseClient,
+  input: AdminServiceGlobalToggleInput,
+): Promise<AdminServiceModerationSummaryItem[]> {
+  const serviceType = input.service_type.trim();
+
+  const { error } = await supabase
+    .from('provider_services')
+    .update({ is_active: input.is_active })
+    .ilike('service_type', serviceType);
+
+  if (error) {
+    throw error;
+  }
+
+  return getAdminServiceModerationSummary(supabase);
+}
+
+export async function rolloutAdminServiceGlobally(
+  supabase: SupabaseClient,
+  input: AdminServiceGlobalRolloutInput,
+): Promise<AdminServiceModerationSummaryItem[]> {
+  const normalizedServiceType = input.service_type.trim();
+  const overwriteExisting = input.overwrite_existing ?? false;
+
+  const providerIdsQuery = supabase
+    .from('providers')
+    .select('id, admin_approval_status, account_status')
+    .order('id', { ascending: true })
+    .limit(5000);
+
+  const { data: providers, error: providersError } = await providerIdsQuery;
+
+  if (providersError) {
+    throw providersError;
+  }
+
+  const targetProviderIds = new Set(
+    (providers ?? [])
+      .filter((provider) => provider.admin_approval_status === 'approved' && provider.account_status === 'active')
+      .map((provider) => provider.id),
+  );
+
+  if (input.provider_ids && input.provider_ids.length > 0) {
+    const requested = new Set(input.provider_ids);
+    for (const providerId of Array.from(targetProviderIds)) {
+      if (!requested.has(providerId)) {
+        targetProviderIds.delete(providerId);
+      }
+    }
+  }
+
+  if (targetProviderIds.size === 0) {
+    return getAdminServiceModerationSummary(supabase);
+  }
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('provider_services')
+    .select('id, provider_id, service_type')
+    .ilike('service_type', normalizedServiceType)
+    .in('provider_id', Array.from(targetProviderIds));
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  const existingByProvider = new Map<number, { id: string; provider_id: number; service_type: string }>();
+
+  for (const row of existingRows ?? []) {
+    existingByProvider.set(row.provider_id, row);
+  }
+
+  const upsertRows: Array<{
+    id?: string;
+    provider_id: number;
+    service_type: string;
+    base_price: number;
+    surge_price: number | null;
+    commission_percentage: number | null;
+    service_duration_minutes: number | null;
+    is_active: boolean;
+  }> = [];
+  const touchedServiceIds: string[] = [];
+
+  for (const providerId of targetProviderIds) {
+    const existing = existingByProvider.get(providerId);
+
+    if (existing && !overwriteExisting) {
+      touchedServiceIds.push(existing.id);
+      continue;
+    }
+
+    upsertRows.push({
+      id: existing?.id,
+      provider_id: providerId,
+      service_type: normalizedServiceType,
+      base_price: input.base_price,
+      surge_price: input.surge_price ?? null,
+      commission_percentage: input.commission_percentage ?? null,
+      service_duration_minutes: input.service_duration_minutes ?? null,
+      is_active: input.is_active ?? true,
+    });
+  }
+
+  if (upsertRows.length > 0) {
+    const { error: upsertError, data: upsertedRows } = await supabase
+      .from('provider_services')
+      .upsert(upsertRows, { onConflict: 'id' })
+      .select('id');
+
+    if (upsertError) {
+      throw upsertError;
+    }
+
+    for (const row of upsertedRows ?? []) {
+      touchedServiceIds.push(row.id);
+    }
+  }
+
+  const pincodeValues = sanitizePincodeValues(input.service_pincodes);
+
+  if (touchedServiceIds.length > 0) {
+    const { error: deleteCoverageError } = await supabase
+      .from('provider_service_pincodes')
+      .delete()
+      .in('provider_service_id', touchedServiceIds);
+
+    if (deleteCoverageError && deleteCoverageError.code !== '42P01') {
+      throw deleteCoverageError;
+    }
+
+    if (pincodeValues.length > 0) {
+      const rows = touchedServiceIds.flatMap((serviceId) =>
+        pincodeValues.map((pincode) => ({
+          provider_service_id: serviceId,
+          pincode,
+          is_enabled: true,
+        })),
+      );
+
+      const { error: insertCoverageError } = await supabase.from('provider_service_pincodes').upsert(rows, {
+        onConflict: 'provider_service_id,pincode',
+      });
+
+      if (insertCoverageError && insertCoverageError.code !== '42P01') {
+        throw insertCoverageError;
+      }
+    }
+  }
+
+  return getAdminServiceModerationSummary(supabase);
+}
+
+export async function listPlatformDiscounts(supabase: SupabaseClient): Promise<PlatformDiscount[]> {
+  const { data, error } = await supabase.from('platform_discounts').select('*').order('created_at', { ascending: false }).limit(500);
+
+  if (error) {
+    if (error.code === '42P01') {
+      return [];
+    }
+    throw error;
+  }
+
+  return (data ?? []) as PlatformDiscount[];
+}
+
+export async function getPlatformDiscountAnalytics(supabase: SupabaseClient): Promise<PlatformDiscountAnalyticsSummary> {
+  const [discounts, redemptionsResult, bookingsCountResult] = await Promise.all([
+    listPlatformDiscounts(supabase),
+    supabase.from('discount_redemptions').select('discount_id, discount_amount, reversed_at').limit(20000),
+    supabase.from('bookings').select('id', { count: 'exact', head: true }),
+  ]);
+
+  if (redemptionsResult.error) {
+    if (redemptionsResult.error.code === '42P01') {
+      return {
+        total_discounts: discounts.length,
+        total_active_discounts: discounts.filter((item) => item.is_active).length,
+        total_redemptions: 0,
+        total_discount_amount: 0,
+        total_bookings: bookingsCountResult.count ?? 0,
+        booking_redemption_rate: 0,
+        top_discounts: [],
+      };
+    }
+    throw redemptionsResult.error;
+  }
+
+  if (bookingsCountResult.error) {
+    throw bookingsCountResult.error;
+  }
+
+  const discountsById = new Map(discounts.map((item) => [item.id, item]));
+  const aggregation = new Map<string, { redemption_count: number; total_discount_amount: number }>();
+
+  for (const row of redemptionsResult.data ?? []) {
+    if (row.reversed_at) {
+      continue;
+    }
+
+    const current = aggregation.get(row.discount_id) ?? { redemption_count: 0, total_discount_amount: 0 };
+    current.redemption_count += 1;
+    current.total_discount_amount += Number(row.discount_amount ?? 0);
+    aggregation.set(row.discount_id, current);
+  }
+
+  const topDiscounts = Array.from(aggregation.entries())
+    .map(([discountId, value]) => {
+      const discount = discountsById.get(discountId);
+
+      if (!discount) {
+        return null;
+      }
+
+      return {
+        discount_id: discount.id,
+        code: discount.code,
+        title: discount.title,
+        redemption_count: value.redemption_count,
+        total_discount_amount: Number(value.total_discount_amount.toFixed(2)),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((left, right) => {
+      if (right.redemption_count !== left.redemption_count) {
+        return right.redemption_count - left.redemption_count;
+      }
+
+      return right.total_discount_amount - left.total_discount_amount;
+    })
+    .slice(0, 5);
+
+  const activeRedemptions = (redemptionsResult.data ?? []).filter((row) => !row.reversed_at);
+  const totalRedemptions = activeRedemptions.length;
+  const totalDiscountAmount = Number(
+    activeRedemptions.reduce((sum, row) => sum + Number(row.discount_amount ?? 0), 0).toFixed(2),
+  );
+  const totalBookings = bookingsCountResult.count ?? 0;
+  const redemptionRate = totalBookings > 0 ? Number(((totalRedemptions / totalBookings) * 100).toFixed(2)) : 0;
+
+  return {
+    total_discounts: discounts.length,
+    total_active_discounts: discounts.filter((item) => item.is_active).length,
+    total_redemptions: totalRedemptions,
+    total_discount_amount: totalDiscountAmount,
+    total_bookings: totalBookings,
+    booking_redemption_rate: redemptionRate,
+    top_discounts: topDiscounts,
+  };
+}
+
+export async function upsertPlatformDiscount(
+  supabase: SupabaseClient,
+  actorId: string,
+  input: AdminUpsertDiscountInput,
+): Promise<PlatformDiscount> {
+  const payload = {
+    id: input.id,
+    code: input.code.trim().toUpperCase(),
+    title: input.title.trim(),
+    description: input.description ?? null,
+    discount_type: input.discount_type,
+    discount_value: input.discount_value,
+    max_discount_amount: input.max_discount_amount ?? null,
+    min_booking_amount: input.min_booking_amount ?? null,
+    applies_to_service_type: input.applies_to_service_type?.trim() || null,
+    valid_from: input.valid_from,
+    valid_until: input.valid_until ?? null,
+    usage_limit_total: input.usage_limit_total ?? null,
+    usage_limit_per_user: input.usage_limit_per_user ?? null,
+    first_booking_only: input.first_booking_only ?? false,
+    is_active: input.is_active ?? true,
+    created_by: actorId,
+  };
+
+  const { data, error } = await supabase.from('platform_discounts').upsert(payload, { onConflict: 'id' }).select('*').single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as PlatformDiscount;
+}
+
+export async function patchPlatformDiscount(
+  supabase: SupabaseClient,
+  discountId: string,
+  patch: Partial<AdminUpsertDiscountInput>,
+): Promise<PlatformDiscount> {
+  const payload = {
+    ...(patch.title !== undefined ? { title: patch.title?.trim() ?? null } : {}),
+    ...(patch.description !== undefined ? { description: patch.description ?? null } : {}),
+    ...(patch.discount_type !== undefined ? { discount_type: patch.discount_type } : {}),
+    ...(patch.discount_value !== undefined ? { discount_value: patch.discount_value } : {}),
+    ...(patch.max_discount_amount !== undefined ? { max_discount_amount: patch.max_discount_amount ?? null } : {}),
+    ...(patch.min_booking_amount !== undefined ? { min_booking_amount: patch.min_booking_amount ?? null } : {}),
+    ...(patch.applies_to_service_type !== undefined
+      ? { applies_to_service_type: patch.applies_to_service_type?.trim() || null }
+      : {}),
+    ...(patch.valid_from !== undefined ? { valid_from: patch.valid_from } : {}),
+    ...(patch.valid_until !== undefined ? { valid_until: patch.valid_until ?? null } : {}),
+    ...(patch.usage_limit_total !== undefined ? { usage_limit_total: patch.usage_limit_total ?? null } : {}),
+    ...(patch.usage_limit_per_user !== undefined ? { usage_limit_per_user: patch.usage_limit_per_user ?? null } : {}),
+    ...(patch.first_booking_only !== undefined ? { first_booking_only: patch.first_booking_only } : {}),
+    ...(patch.is_active !== undefined ? { is_active: patch.is_active } : {}),
+  };
+
+  const { data, error } = await supabase.from('platform_discounts').update(payload).eq('id', discountId).select('*').single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as PlatformDiscount;
+}
+
+export async function deletePlatformDiscount(supabase: SupabaseClient, discountId: string): Promise<void> {
+  const { error } = await supabase.from('platform_discounts').delete().eq('id', discountId);
+
+  if (error) {
+    throw error;
+  }
+}
+
 export async function verifyDocument(
   supabase: SupabaseClient,
   documentId: string,
@@ -841,15 +1239,19 @@ export async function getProviderReviewResponseHistory(supabase: SupabaseClient,
 }
 
 export async function listAdminProviderModerationItems(supabase: SupabaseClient): Promise<AdminProviderModerationItem[]> {
-  const [providersResult, documentsResult] = await Promise.all([
+  const [providersResult, documentsResult, clinicDetailsResult] = await Promise.all([
     supabase
       .from('providers')
       .select(
-        'id, name, provider_type, business_name, admin_approval_status, verification_status, account_status, average_rating, total_bookings, created_at, updated_at',
+        'id, name, provider_type, business_name, admin_approval_status, verification_status, account_status, average_rating, total_bookings, service_radius_km, created_at, updated_at',
       )
       .order('created_at', { ascending: false })
       .limit(300),
     supabase.from('provider_documents').select('provider_id, verification_status').limit(5000),
+    supabase
+      .from('provider_clinic_details')
+      .select('provider_id, address, city, state, pincode, latitude, longitude')
+      .limit(5000),
   ]);
 
   if (providersResult.error) {
@@ -858,6 +1260,10 @@ export async function listAdminProviderModerationItems(supabase: SupabaseClient)
 
   if (documentsResult.error) {
     throw documentsResult.error;
+  }
+
+  if (clinicDetailsResult.error) {
+    throw clinicDetailsResult.error;
   }
 
   const docsByProvider = new Map<number, { pending: number; approved: number; rejected: number }>();
@@ -876,11 +1282,266 @@ export async function listAdminProviderModerationItems(supabase: SupabaseClient)
     docsByProvider.set(row.provider_id, current);
   }
 
+  const clinicByProvider = new Map<number, Omit<AdminProviderLocationModeration, 'provider_id' | 'service_radius_km'>>();
+
+  for (const row of clinicDetailsResult.data ?? []) {
+    clinicByProvider.set(row.provider_id, {
+      address: row.address,
+      city: row.city,
+      state: row.state,
+      pincode: row.pincode,
+      latitude: row.latitude,
+      longitude: row.longitude,
+    });
+  }
+
   return (providersResult.data ?? []).map((item) => ({
     ...item,
     provider_type: item.provider_type,
+    address: clinicByProvider.get(item.id)?.address ?? null,
+    city: clinicByProvider.get(item.id)?.city ?? null,
+    state: clinicByProvider.get(item.id)?.state ?? null,
+    pincode: clinicByProvider.get(item.id)?.pincode ?? null,
+    latitude: clinicByProvider.get(item.id)?.latitude ?? null,
+    longitude: clinicByProvider.get(item.id)?.longitude ?? null,
+    service_radius_km: item.service_radius_km ?? null,
     documentCounts: docsByProvider.get(item.id) ?? { pending: 0, approved: 0, rejected: 0 },
   })) as AdminProviderModerationItem[];
+}
+
+export async function getAdminProviderLocation(
+  supabase: SupabaseClient,
+  providerId: number,
+): Promise<AdminProviderLocationModeration> {
+  const [providerResult, clinicDetailsResult] = await Promise.all([
+    supabase.from('providers').select('id, service_radius_km').eq('id', providerId).maybeSingle(),
+    supabase
+      .from('provider_clinic_details')
+      .select('provider_id, address, city, state, pincode, latitude, longitude')
+      .eq('provider_id', providerId)
+      .maybeSingle(),
+  ]);
+
+  if (providerResult.error) {
+    throw providerResult.error;
+  }
+
+  if (clinicDetailsResult.error) {
+    throw clinicDetailsResult.error;
+  }
+
+  if (!providerResult.data) {
+    throw new Error('Provider not found');
+  }
+
+  return {
+    provider_id: providerResult.data.id,
+    address: clinicDetailsResult.data?.address ?? null,
+    city: clinicDetailsResult.data?.city ?? null,
+    state: clinicDetailsResult.data?.state ?? null,
+    pincode: clinicDetailsResult.data?.pincode ?? null,
+    latitude: clinicDetailsResult.data?.latitude ?? null,
+    longitude: clinicDetailsResult.data?.longitude ?? null,
+    service_radius_km: providerResult.data.service_radius_km ?? null,
+  };
+}
+
+function hasTextValue(value: string | null | undefined) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validateAdminProviderLocationConsistency(location: AdminProviderLocationModeration): string[] {
+  const issues: string[] = [];
+  const hasLatitude = location.latitude !== null;
+  const hasLongitude = location.longitude !== null;
+
+  if (hasLatitude !== hasLongitude) {
+    issues.push('Latitude and longitude must be provided together.');
+  }
+
+  if (hasLatitude && hasLongitude) {
+    const hasAddress = hasTextValue(location.address);
+    const hasCity = hasTextValue(location.city);
+    const hasState = hasTextValue(location.state);
+    const hasPincode = hasTextValue(location.pincode);
+
+    if (!hasAddress || !hasCity || !hasState || !hasPincode) {
+      issues.push('Address, city, state, and pincode are required when coordinates are set.');
+    }
+  }
+
+  if (location.pincode && !/^[1-9]\d{5}$/.test(location.pincode.trim())) {
+    issues.push('Pincode must be a valid 6-digit Indian pincode.');
+  }
+
+  return issues;
+}
+
+export async function getAdminProviderCoverageWarnings(
+  supabase: SupabaseClient,
+  providerId: number,
+  location: AdminProviderLocationModeration,
+): Promise<string[]> {
+  const { data: providerServices, error: providerServicesError } = await supabase
+    .from('provider_services')
+    .select('id')
+    .eq('provider_id', providerId)
+    .limit(5000);
+
+  if (providerServicesError) {
+    throw providerServicesError;
+  }
+
+  const serviceIds = (providerServices ?? []).map((item) => item.id);
+
+  if (serviceIds.length === 0) {
+    return [];
+  }
+
+  const { data: pincodeRows, error: pincodeRowsError } = await supabase
+    .from('provider_service_pincodes')
+    .select('provider_service_id, pincode, is_enabled')
+    .in('provider_service_id', serviceIds)
+    .limit(10000);
+
+  if (pincodeRowsError) {
+    if (pincodeRowsError.code === '42P01') {
+      return [];
+    }
+
+    throw pincodeRowsError;
+  }
+
+  const enabledPincodes = new Set(
+    (pincodeRows ?? [])
+      .filter((row) => row.is_enabled !== false)
+      .map((row) => row.pincode)
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+  );
+
+  if (enabledPincodes.size === 0) {
+    return [];
+  }
+
+  const clinicPincode = location.pincode?.trim() ?? null;
+  const serviceRadius = location.service_radius_km;
+  const coveragePincodeList = Array.from(enabledPincodes);
+  const nonClinicCoverageCount = clinicPincode
+    ? coveragePincodeList.filter((item) => item !== clinicPincode).length
+    : coveragePincodeList.length;
+
+  const warnings: string[] = [];
+
+  if (!clinicPincode && serviceRadius === null) {
+    warnings.push('Service pincodes are configured, but clinic pincode and service radius are both missing.');
+  }
+
+  if (clinicPincode && serviceRadius !== null && serviceRadius <= 0 && nonClinicCoverageCount > 0) {
+    warnings.push('Service radius is 0 km, but enabled service pincodes extend beyond the clinic pincode.');
+  }
+
+  if (serviceRadius !== null && serviceRadius <= 2 && nonClinicCoverageCount >= 3) {
+    warnings.push('Service radius is very small for the current pincode rollout footprint.');
+  }
+
+  if (serviceRadius === null && enabledPincodes.size >= 10) {
+    warnings.push('Large pincode rollout is configured without a service radius baseline.');
+  }
+
+  return warnings;
+}
+
+export async function updateAdminProviderLocation(
+  supabase: SupabaseClient,
+  providerId: number,
+  input: UpdateAdminProviderLocationInput,
+): Promise<AdminProviderLocationModeration> {
+  const { data: provider, error: providerLookupError } = await supabase
+    .from('providers')
+    .select('id')
+    .eq('id', providerId)
+    .maybeSingle();
+
+  if (providerLookupError) {
+    throw providerLookupError;
+  }
+
+  if (!provider) {
+    throw new Error('Provider not found');
+  }
+
+  const existingLocation = await getAdminProviderLocation(supabase, providerId);
+  const mergedLocation: AdminProviderLocationModeration = {
+    ...existingLocation,
+    ...(Object.prototype.hasOwnProperty.call(input, 'address') ? { address: input.address ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'city') ? { city: input.city ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'state') ? { state: input.state ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'pincode') ? { pincode: input.pincode ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'latitude') ? { latitude: input.latitude ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'longitude') ? { longitude: input.longitude ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'service_radius_km')
+      ? { service_radius_km: input.service_radius_km ?? null }
+      : {}),
+  };
+
+  const consistencyIssues = validateAdminProviderLocationConsistency(mergedLocation);
+
+  if (consistencyIssues.length > 0) {
+    throw new Error(consistencyIssues.join(' '));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'service_radius_km')) {
+    const { error: providerUpdateError } = await supabase
+      .from('providers')
+      .update({ service_radius_km: input.service_radius_km ?? null })
+      .eq('id', providerId);
+
+    if (providerUpdateError) {
+      throw providerUpdateError;
+    }
+  }
+
+  const clinicPayload: Record<string, string | number | null> = {};
+
+  if (Object.prototype.hasOwnProperty.call(input, 'address')) {
+    clinicPayload.address = input.address ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'city')) {
+    clinicPayload.city = input.city ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'state')) {
+    clinicPayload.state = input.state ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'pincode')) {
+    clinicPayload.pincode = input.pincode ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'latitude')) {
+    clinicPayload.latitude = input.latitude ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'longitude')) {
+    clinicPayload.longitude = input.longitude ?? null;
+  }
+
+  if (Object.keys(clinicPayload).length > 0) {
+    const { error: clinicUpsertError } = await supabase.from('provider_clinic_details').upsert(
+      {
+        provider_id: providerId,
+        ...clinicPayload,
+      },
+      { onConflict: 'provider_id' },
+    );
+
+    if (clinicUpsertError) {
+      throw clinicUpsertError;
+    }
+  }
+
+  return getAdminProviderLocation(supabase, providerId);
 }
 
 export async function logProviderAdminAuditEvent(

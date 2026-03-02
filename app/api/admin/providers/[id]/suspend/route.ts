@@ -9,7 +9,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

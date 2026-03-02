@@ -10,7 +10,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 
@@ -37,7 +37,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     return unauthorized();
   }
 
-  if (role !== 'admin') {
+  if (role !== 'admin' && role !== 'staff') {
     return forbidden();
   }
 

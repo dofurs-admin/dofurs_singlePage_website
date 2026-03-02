@@ -3,13 +3,26 @@ import type { OwnerProfileDatabase } from '@/lib/supabase/owner-profile.database
 
 type OwnerProfileSupabaseClient = SupabaseClient<OwnerProfileDatabase>;
 
+type OwnerProfileAuditRpcClient = {
+  rpc: (
+    fn: 'log_owner_profile_audit_event',
+    args: {
+      p_user_id: string;
+      p_action: string;
+      p_metadata: Record<string, unknown>;
+    },
+  ) => Promise<{ error: { message: string } | null }>;
+};
+
 export async function logOwnerProfileAudit(
   supabase: OwnerProfileSupabaseClient,
   userId: string,
   action: string,
   metadata: Record<string, unknown> = {},
 ) {
-  const { error } = await supabase.rpc('log_owner_profile_audit_event', {
+  const rpcSupabase = supabase as unknown as OwnerProfileAuditRpcClient;
+
+  const { error } = await rpcSupabase.rpc('log_owner_profile_audit_event', {
     p_user_id: userId,
     p_action: action,
     p_metadata: metadata,
