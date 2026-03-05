@@ -16,6 +16,7 @@ import ServiceBuilder from './admin/ServiceBuilder';
 import PackageBuilder from './admin/PackageBuilder';
 import ProviderOnboardingModal from './admin/ProviderOnboardingModal';
 import ImageUploadField from '@/components/ui/ImageUploadField';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 import { useAdminBookingRealtime, useAdminProviderApprovalRealtime, useOptimisticUpdate } from '@/lib/hooks/useRealtime';
 
 // Premium Components
@@ -3115,7 +3116,13 @@ export default function AdminDashboardClient({
                         >
                           {provider.profile_photo_url ? (
                             <span className="relative h-6 w-6 overflow-hidden rounded-full border border-neutral-200/70 bg-neutral-100">
-                              <Image src={provider.profile_photo_url} alt={provider.name} fill className="object-cover" unoptimized />
+                              <StorageBackedImage
+                                value={provider.profile_photo_url}
+                                bucket="user-photos"
+                                alt={provider.name}
+                                fill
+                                className="object-cover"
+                              />
                             </span>
                           ) : (
                             <span className="flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200/70 bg-neutral-100 text-[10px] font-semibold text-neutral-600">
@@ -3396,7 +3403,13 @@ export default function AdminDashboardClient({
                     <div className="flex items-start gap-3">
                       {provider.profile_photo_url ? (
                         <div className="relative h-12 w-12 overflow-hidden rounded-full border border-neutral-200/70 bg-neutral-100">
-                          <Image src={provider.profile_photo_url} alt={provider.name} fill className="object-cover" unoptimized />
+                          <StorageBackedImage
+                            value={provider.profile_photo_url}
+                            bucket="user-photos"
+                            alt={provider.name}
+                            fill
+                            className="object-cover"
+                          />
                         </div>
                       ) : (
                         <div className="flex h-12 w-12 items-center justify-center rounded-full border border-neutral-200/70 bg-neutral-100 text-sm font-semibold text-neutral-600">

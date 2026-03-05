@@ -10,6 +10,7 @@ import { headerPageLinks, navItems } from '@/lib/site-data';
 import { theme } from '@/lib/theme';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
 import BrandMark from './BrandMark';
+import StorageBackedImage from './ui/StorageBackedImage';
 
 export default function Navbar() {
   const router = useRouter();
@@ -106,31 +107,7 @@ export default function Navbar() {
         setProfilePhotoUrl(null);
         return;
       }
-
-      if (/^https?:\/\//i.test(photoPath)) {
-        setProfilePhotoUrl(photoPath);
-        return;
-      }
-
-      const signedResponse = await fetch('/api/storage/signed-read-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          bucket: 'user-photos',
-          path: photoPath,
-          expiresIn: 3600,
-        }),
-      });
-
-      if (!active || !signedResponse.ok) {
-        setProfilePhotoUrl(null);
-        return;
-      }
-
-      const signedPayload = (await signedResponse.json().catch(() => null)) as { signedUrl?: string } | null;
-      setProfilePhotoUrl(signedPayload?.signedUrl ?? null);
+      setProfilePhotoUrl(photoPath);
     }
 
     loadProfilePhoto();
@@ -229,7 +206,7 @@ export default function Navbar() {
               >
                 {profilePhotoUrl ? (
                   <span className="relative block h-full w-full overflow-hidden rounded-full">
-                    <Image src={profilePhotoUrl} alt="Profile" fill sizes="40px" className="object-cover" />
+                    <StorageBackedImage value={profilePhotoUrl} bucket="user-photos" alt="Profile" fill sizes="40px" className="object-cover" />
                   </span>
                 ) : (
                   initials

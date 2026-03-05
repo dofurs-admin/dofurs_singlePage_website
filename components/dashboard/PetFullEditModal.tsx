@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/ToastProvider';
 import { calculateAgeFromDOB } from '@/lib/utils/date';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
 import { getPetFallbackIcon } from '@/lib/pets/icon-helpers';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Pet = {
   id: number;
@@ -284,7 +285,7 @@ export default function PetFullEditModal({ isOpen, onClose, pet, onSave, photoUr
           try {
             const uploaded = await uploadCompressedImage(profilePhotoFile, 'pet-photos');
             uploadedPhotoPath = uploaded.path;
-            setProfilePhotoPreview(uploaded.signedUrl);
+            setProfilePhotoPreview(uploaded.path);
             setProfilePhotoFile(null);
           } catch (error) {
             setSaveStatus('error');
@@ -354,7 +355,11 @@ export default function PetFullEditModal({ isOpen, onClose, pet, onSave, photoUr
             <div className="flex-shrink-0">
               <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-xl border-2 border-white bg-white shadow-sm">
                 {profilePhotoPreview ? (
-                  <Image src={profilePhotoPreview} alt={pet.name} fill className="object-cover" unoptimized />
+                  profilePhotoPreview.startsWith('blob:') ? (
+                    <Image src={profilePhotoPreview} alt={pet.name} fill className="object-cover" unoptimized />
+                  ) : (
+                    <StorageBackedImage value={profilePhotoPreview} bucket="pet-photos" alt={pet.name} fill className="object-cover" />
+                  )
                 ) : (
                   <span className="text-2xl">{getPetFallbackIcon(draft.pet.breed || pet.breed)}</span>
                 )}
@@ -400,7 +405,11 @@ export default function PetFullEditModal({ isOpen, onClose, pet, onSave, photoUr
                 <div className="md:col-span-2 flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
                   <div className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-white">
                     {profilePhotoPreview ? (
-                      <Image src={profilePhotoPreview} alt={`${pet.name} preview`} fill className="object-cover" unoptimized />
+                      profilePhotoPreview.startsWith('blob:') ? (
+                        <Image src={profilePhotoPreview} alt={`${pet.name} preview`} fill className="object-cover" unoptimized />
+                      ) : (
+                        <StorageBackedImage value={profilePhotoPreview} bucket="pet-photos" alt={`${pet.name} preview`} fill className="object-cover" />
+                      )
                     ) : (
                       <span className="text-lg">{getPetFallbackIcon(draft.pet.breed || pet.breed)}</span>
                     )}

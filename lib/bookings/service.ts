@@ -197,6 +197,18 @@ async function applyBookingStatusTransition(
 }
 
 export async function createBooking(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
+  const isServiceBooking = (input.bookingType ?? 'service') === 'service';
+
+  if (isServiceBooking) {
+    return createBookingWithLegacyServiceFallback(supabase, userId, input);
+  }
+
+  const requiresLegacyServiceId = await bookingTableRequiresLegacyServiceId(supabase);
+
+  if (requiresLegacyServiceId) {
+    return createBookingWithLegacyServiceFallback(supabase, userId, input);
+  }
+
   const { data, error } = await supabase.rpc('create_booking_atomic', {
     p_user_id: userId,
     p_pet_id: input.petId,
@@ -213,12 +225,29 @@ export async function createBooking(supabase: SupabaseClient, userId: string, in
     p_provider_notes: input.providerNotes ?? null,
     p_payment_mode: 'direct_to_provider',
     p_discount_code: input.discountCode ?? null,
-    p_discount_amount: input.discountAmount ?? null,
-    p_final_price: input.finalPrice ?? null,
     p_add_ons: input.addOns ?? [],
   });
 
   if (error) {
+    const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+    const shouldFallbackToLegacyCreate =
+      message.includes('service_id') &&
+      (message.includes('null value') || message.includes('not-null constraint') || message.includes('violates not-null'));
+
+    if (isServiceBooking && input.providerServiceId) {
+      try {
+        return await createBookingWithLegacyServiceFallback(supabase, userId, input);
+      } catch (fallbackError) {
+        if (shouldFallbackToLegacyCreate) {
+          throw fallbackError;
+        }
+      }
+    }
+
+    if (shouldFallbackToLegacyCreate) {
+      return createBookingWithLegacyServiceFallback(supabase, userId, input);
+    }
+
     throw error;
   }
 
@@ -239,6 +268,155 @@ export async function createBooking(supabase: SupabaseClient, userId: string, in
   }
 
   return booking;
+}
+
+async function createBookingWithLegacyServiceFallback(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
+  const providerServiceId = await resolveProviderServiceIdForLegacyCreate(supabase, input);
+
+  const { data: providerService, error: providerServiceError } = await supabase
+    .from('provider_services')
+    .select('id, provider_id, service_type, service_duration_minutes, base_price, is_active')
+    .eq('id', providerServiceId)
+    .eq('provider_id', input.providerId)
+    .eq('is_active', true)
+    .maybeSingle<{
+      id: string;
+      provider_id: number;
+      service_type: string;
+      service_duration_minutes: number | null;
+      base_price: number;
+      is_active: boolean;
+    }>();
+
+  if (providerServiceError || !providerService) {
+    throw providerServiceError ?? new Error('Service not found or is inactive.');
+  }
+
+  const { data: legacyService, error: legacyServiceError } = await supabase
+    .from('services')
+    .select('id, price, duration_minutes, buffer_minutes')
+    .eq('provider_id', input.providerId)
+    .ilike('name', providerService.service_type)
+    .order('id', { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: number; price: number; duration_minutes: number; buffer_minutes: number }>();
+
+  if (legacyServiceError) {
+    throw legacyServiceError;
+  }
+
+  let resolvedLegacyService = legacyService;
+
+  if (!resolvedLegacyService) {
+    const { data: createdLegacyService, error: createLegacyServiceError } = await supabase
+      .from('services')
+      .insert({
+        provider_id: input.providerId,
+        name: providerService.service_type,
+        duration_minutes: providerService.service_duration_minutes ?? 30,
+        buffer_minutes: 0,
+        price: providerService.base_price,
+      })
+      .select('id, price, duration_minutes, buffer_minutes')
+      .single<{ id: number; price: number; duration_minutes: number; buffer_minutes: number }>();
+
+    if (createLegacyServiceError || !createdLegacyService) {
+      throw createLegacyServiceError ?? new Error('Unable to create legacy service mapping for booking.');
+    }
+
+    resolvedLegacyService = createdLegacyService;
+  }
+
+  const durationMinutes = Math.max(providerService.service_duration_minutes ?? resolvedLegacyService.duration_minutes ?? 30, 1);
+  const bookingStart = new Date(`${input.bookingDate}T${input.startTime}:00Z`);
+  const bookingEnd = new Date(bookingStart.getTime() + durationMinutes * 60 * 1000);
+  const startTime = bookingStart.toISOString().slice(11, 16);
+  const endTime = bookingEnd.toISOString().slice(11, 16);
+
+  const amount = resolvedLegacyService.price ?? providerService.base_price;
+
+  const insertPayload = {
+    user_id: userId,
+    pet_id: input.petId,
+    provider_id: input.providerId,
+    service_id: resolvedLegacyService.id,
+    provider_service_id: providerServiceId,
+    service_type: providerService.service_type,
+    booking_date: input.bookingDate,
+    start_time: startTime,
+    end_time: endTime,
+    booking_start: bookingStart.toISOString(),
+    booking_end: bookingEnd.toISOString(),
+    booking_mode: input.bookingMode,
+    location_address: input.locationAddress ?? null,
+    latitude: input.latitude ?? null,
+    longitude: input.longitude ?? null,
+    booking_status: 'pending' as const,
+    status: 'pending' as const,
+    price_at_booking: amount,
+    admin_price_reference: amount,
+    amount,
+    provider_notes: input.providerNotes ?? null,
+    payment_mode: 'direct_to_provider' as const,
+    discount_code: input.discountCode ?? null,
+  };
+
+  const { data: booking, error: bookingError } = await supabase
+    .from('bookings')
+    .insert(insertPayload)
+    .select(BOOKING_SELECT)
+    .single<BookingRecord>();
+
+  if (bookingError || !booking) {
+    throw bookingError ?? new Error('Booking created but could not be retrieved');
+  }
+
+  return booking;
+}
+
+async function resolveProviderServiceIdForLegacyCreate(supabase: SupabaseClient, input: CreateBookingInput) {
+  if (input.providerServiceId) {
+    return input.providerServiceId;
+  }
+
+  if ((input.bookingType ?? 'service') === 'package' && input.packageId) {
+    const { data: packageService, error: packageServiceError } = await supabase
+      .from('package_services')
+      .select('provider_service_id, provider_services!inner(provider_id, is_active)')
+      .eq('package_id', input.packageId)
+      .eq('provider_services.provider_id', input.providerId)
+      .eq('provider_services.is_active', true)
+      .order('sequence_order', { ascending: true })
+      .limit(1)
+      .maybeSingle<{ provider_service_id: string }>();
+
+    if (packageServiceError) {
+      throw packageServiceError;
+    }
+
+    if (packageService?.provider_service_id) {
+      return packageService.provider_service_id;
+    }
+  }
+
+  throw new Error('Service not found or is inactive.');
+}
+
+async function bookingTableRequiresLegacyServiceId(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from('information_schema.columns')
+    .select('is_nullable')
+    .eq('table_schema', 'public')
+    .eq('table_name', 'bookings')
+    .eq('column_name', 'service_id')
+    .limit(1)
+    .maybeSingle<{ is_nullable: 'YES' | 'NO' }>();
+
+  if (error || !data) {
+    return false;
+  }
+
+  return data.is_nullable === 'NO';
 }
 
 export async function getMyBookings(supabase: SupabaseClient, userId: string) {

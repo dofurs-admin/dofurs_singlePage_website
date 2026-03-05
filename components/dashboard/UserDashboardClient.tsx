@@ -21,6 +21,7 @@ import ProgressRing from './ProgressRing';
 import Modal from '@/components/ui/Modal';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
 import { getPetFallbackIcon } from '@/lib/pets/icon-helpers';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Pet = {
   id: number;
@@ -84,7 +85,6 @@ export default function UserDashboardClient({
 }) {
   const [pets, setPets] = useState(initialPets);
   const [bookings, setBookings] = useState(initialBookings);
-  const [petPhotoUrls, setPetPhotoUrls] = useState<Record<number, string>>({});
   const [petCompletions, setPetCompletions] = useState<Record<number, number>>({});
   const [bookingFilter, setBookingFilter] = useState<'all' | 'active' | 'history'>('all');
   const [isPending, startTransition] = useTransition();
@@ -141,61 +141,6 @@ export default function UserDashboardClient({
   }, []);
 
   useBookingRealtime(userId, refreshBookings);
-
-  useEffect(() => {
-    let active = true;
-
-    async function hydratePetPhotoUrls() {
-      const entries = await Promise.all(
-        pets.map(async (pet): Promise<[number, string]> => {
-          if (!pet.photo_url) {
-            return [pet.id, ''];
-          }
-
-          if (/^https?:\/\//i.test(pet.photo_url)) {
-            return [pet.id, pet.photo_url];
-          }
-
-          const response = await fetch('/api/storage/signed-read-url', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              bucket: 'pet-photos',
-              path: pet.photo_url,
-              expiresIn: 3600,
-            }),
-          });
-
-          if (!response.ok) {
-            return [pet.id, ''];
-          }
-
-          const payload = (await response.json().catch(() => null)) as { signedUrl?: string } | null;
-          return [pet.id, payload?.signedUrl ?? ''];
-        }),
-      );
-
-      if (!active) {
-        return;
-      }
-
-      const nextMap: Record<number, string> = {};
-      entries.forEach(([id, url]) => {
-        if (url) {
-          nextMap[id] = url;
-        }
-      });
-      setPetPhotoUrls(nextMap);
-    }
-
-    hydratePetPhotoUrls();
-
-    return () => {
-      active = false;
-    };
-  }, [pets]);
 
   useEffect(() => {
     let active = true;
@@ -365,7 +310,7 @@ export default function UserDashboardClient({
 
   function openEditModal(pet: Pet) {
     setEditingPet(pet);
-    setEditingPetPhotoUrl(petPhotoUrls[pet.id] || '');
+    setEditingPetPhotoUrl(pet.photo_url || '');
     setShowEditModal(true);
   }
 
@@ -401,12 +346,10 @@ export default function UserDashboardClient({
     }
 
     let photoUrl: string | null = null;
-    let uploadedPhotoSignedUrl: string | null = null;
     if (newPetPhotoFile) {
       try {
         const uploaded = await uploadCompressedImage(newPetPhotoFile, 'pet-photos');
         photoUrl = uploaded.path;
-        uploadedPhotoSignedUrl = uploaded.signedUrl;
       } catch (error) {
         showToast(error instanceof Error ? error.message : 'Photo upload failed.', 'error');
         return;
@@ -438,9 +381,6 @@ export default function UserDashboardClient({
       }
 
       setPets((current) => [payload.pet!, ...current]);
-      if (uploadedPhotoSignedUrl) {
-        setPetPhotoUrls((current) => ({ ...current, [payload.pet!.id]: uploadedPhotoSignedUrl! }));
-      }
       setNewPet({ name: '', breed: '', dateOfBirth: '', gender: '' });
       closeCreatePetModal();
       showToast('Pet profile created.', 'success');
@@ -564,13 +504,13 @@ export default function UserDashboardClient({
                           className="flex items-center gap-3 rounded-xl border border-neutral-200/40 bg-white p-4 shadow-sm"
                         >
                           <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">
-                            {petPhotoUrls[pet.id] ? (
-                              <Image
-                                src={petPhotoUrls[pet.id]}
+                            {pet.photo_url ? (
+                              <StorageBackedImage
+                                value={pet.photo_url}
+                                bucket="pet-photos"
                                 alt={`${pet.name} photo`}
                                 width={128}
                                 height={128}
-                                unoptimized
                                 className="h-full w-full object-cover"
                               />
                             ) : (
@@ -793,7 +733,7 @@ export default function UserDashboardClient({
         isOpen={showViewModal}
         onClose={() => setShowViewModal(false)}
         data={viewModalData}
-        photoUrl={viewModalData?.pet?.id ? petPhotoUrls[viewModalData.pet.id] : null}
+        photoUrl={viewModalData?.pet?.photo_url ?? null}
         isLoading={isLoadingViewData}
       />
 
@@ -1021,13 +961,13 @@ export default function UserDashboardClient({
                     className="flex items-center gap-3 rounded-xl border border-neutral-200/40 bg-white p-4 shadow-sm"
                   >
                     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">
-                      {petPhotoUrls[pet.id] ? (
-                        <Image
-                          src={petPhotoUrls[pet.id]}
+                      {pet.photo_url ? (
+                        <StorageBackedImage
+                          value={pet.photo_url}
+                          bucket="pet-photos"
                           alt={`${pet.name} photo`}
                           width={128}
                           height={128}
-                          unoptimized
                           className="h-full w-full object-cover"
                         />
                       ) : (

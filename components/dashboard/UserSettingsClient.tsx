@@ -2,9 +2,10 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useEffect, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Profile = {
   id: string;
@@ -21,50 +22,8 @@ export default function UserSettingsClient({ initialProfile }: { initialProfile:
   const [profile, setProfile] = useState(initialProfile);
   const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState<string | null>(null);
-  const [persistedPhotoSignedUrl, setPersistedPhotoSignedUrl] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
-
-  useEffect(() => {
-    let active = true;
-
-    async function hydrateProfilePhoto() {
-      if (!profile.photo_url) {
-        setPersistedPhotoSignedUrl(null);
-        return;
-      }
-
-      if (/^https?:\/\//i.test(profile.photo_url)) {
-        setPersistedPhotoSignedUrl(profile.photo_url);
-        return;
-      }
-
-      const response = await fetch('/api/storage/signed-read-url', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          bucket: 'user-photos',
-          path: profile.photo_url,
-          expiresIn: 3600,
-        }),
-      });
-
-      if (!active || !response.ok) {
-        return;
-      }
-
-      const payload = (await response.json().catch(() => null)) as { signedUrl?: string } | null;
-      setPersistedPhotoSignedUrl(payload?.signedUrl ?? null);
-    }
-
-    hydrateProfilePhoto();
-
-    return () => {
-      active = false;
-    };
-  }, [profile.photo_url]);
 
   function updateProfile() {
     const normalizedName = (profile.name ?? '').trim();
@@ -167,15 +126,26 @@ export default function UserSettingsClient({ initialProfile }: { initialProfile:
       <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
         <h2 className="text-lg font-semibold text-ink">Profile Settings</h2>
         <div className="mt-4 flex items-center gap-3">
-          {profilePhotoPreview || persistedPhotoSignedUrl ? (
+          {profilePhotoPreview || profile.photo_url ? (
             <div className="relative h-16 w-16 overflow-hidden rounded-full">
-              <Image
-                src={profilePhotoPreview ?? persistedPhotoSignedUrl ?? ''}
-                alt="Profile"
-                fill
-                sizes="64px"
-                className="object-cover"
-              />
+              {profilePhotoPreview ? (
+                <Image
+                  src={profilePhotoPreview}
+                  alt="Profile"
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                />
+              ) : profile.photo_url ? (
+                <StorageBackedImage
+                  value={profile.photo_url}
+                  bucket="user-photos"
+                  alt="Profile"
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                />
+              ) : null}
             </div>
           ) : (
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#fff2e7] text-sm font-semibold text-ink">

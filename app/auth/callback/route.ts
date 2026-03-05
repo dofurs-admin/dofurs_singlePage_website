@@ -128,5 +128,13 @@ export async function GET(request: Request) {
     return NextResponse.redirect(authPageUrl);
   }
 
+  const { data: profile } = await supabase.from('users').select('roles(name)').eq('id', user.id).maybeSingle();
+  const roleName = (Array.isArray(profile?.roles) ? profile?.roles[0] : profile?.roles)?.name;
+
+  if (roleName === 'admin' || roleName === 'staff') {
+    const adminRedirectUrl = new URL('/dashboard/admin', url.origin);
+    return NextResponse.redirect(adminRedirectUrl);
+  }
+
   return NextResponse.redirect(redirectUrl);
 }

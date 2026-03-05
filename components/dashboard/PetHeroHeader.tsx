@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import ProgressRing from './ProgressRing';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 interface PetHeroHeaderProps {
   petName: string;
@@ -74,12 +75,12 @@ export default function PetHeroHeader({
           <div className="relative">
             {photoUrl ? (
               <div className="relative h-32 w-32 rounded-full overflow-hidden border-4 border-white shadow-lg">
-                <Image
-                  src={photoUrl}
+                <StorageBackedImage
+                  value={photoUrl}
+                  bucket="pet-photos"
                   alt={petName}
                   fill
                   className="object-cover"
-                  unoptimized
                 />
               </div>
             ) : (

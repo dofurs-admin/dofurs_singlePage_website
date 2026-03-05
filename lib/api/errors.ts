@@ -141,6 +141,11 @@ function mapKnownMessageToStatus(message: string) {
 }
 
 export function toFriendlyApiError(error: unknown, fallbackMessage = 'Something went wrong'): FriendlyApiError {
+  const objectMessage =
+    error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string'
+      ? ((error as { message: string }).message ?? '').trim()
+      : '';
+
   // Handle Supabase-specific errors with code property
   if (error && typeof error === 'object' && 'code' in error) {
     const dbError = error as { code?: string; message?: string };
@@ -151,7 +156,7 @@ export function toFriendlyApiError(error: unknown, fallbackMessage = 'Something 
   }
 
   // Extract message from Error objects
-  const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : objectMessage || String(error);
 
   // Try to map by message content first
   const mapped = mapKnownMessageToStatus(message);

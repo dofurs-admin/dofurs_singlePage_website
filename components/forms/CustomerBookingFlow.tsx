@@ -10,7 +10,6 @@ import type { PricingBreakdown } from '@/lib/bookings/types';
 import type { FlowState } from '@/lib/flows/contracts';
 import { apiRequest } from '@/lib/api/client';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
-import PriceBreakdownCard from './PriceBreakdownCard';
 import PremiumBookingConfirmation from './PremiumBookingConfirmation';
 import FormField from './FormField';
 import { useOptimisticSelection } from '@/lib/hooks/useOptimisticSelection';
@@ -146,6 +145,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   const [confirmDeleteAddressId, setConfirmDeleteAddressId] = useState<string | null>(null);
   const [isDetectingAddress, setIsDetectingAddress] = useState(false);
   const [isDetectingCurrentLocation, setIsDetectingCurrentLocation] = useState(false);
+  const [isSavingAddress, setIsSavingAddress] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [providerNotes, setProviderNotes] = useState('');
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -377,6 +377,24 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
 
     return Array.from(unique.values());
   }, [slots, bookingDate]);
+
+  const selectedPackageForBooking = useMemo(
+    () => packages.find((pkg) => pkg.id === selectedPackageId) ?? null,
+    [packages, selectedPackageId],
+  );
+
+  const controlClassName =
+    'h-11 sm:h-12 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm transition focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/20';
+  const summaryServiceName =
+    bookingType === 'service'
+      ? providerServices.find((service) => service.id === serviceId)?.service_type || 'Not selected'
+      : selectedPackageForBooking?.name || 'Not selected';
+  const summaryDate = bookingDate || 'Not selected';
+  const summaryTime = slotStartTime || 'Not selected';
+  const summaryAddress = locationAddress.trim() || 'Not selected';
+  const summaryBaseAmount = discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0;
+  const summaryDiscountAmount = discountPreview?.discountAmount ?? 0;
+  const summaryTotalAmount = discountPreview?.finalAmount ?? priceCalculation?.final_total ?? 0;
 
   useEffect(() => {
     setServiceId(providerServices[0]?.id ?? null);
@@ -1021,7 +1039,11 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     );
   }
 
-  function saveNewAddress() {
+  async function saveNewAddress() {
+    if (isSavingAddress) {
+      return;
+    }
+
     if (requiresBookingUserSelection) {
       setLocationError('Select a customer first to save address.');
       showToast('Select a customer first to save address.', 'error');
@@ -1049,36 +1071,43 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       return;
     }
 
-    const localId = `local-${Date.now()}`;
-    const saved: SelectableAddress = {
-      id: localId,
-      label: 'Other',
-      address_line_1: fullAddress,
-      address_line_2: null,
-      city: '',
-      state: '',
-      pincode: '',
-      country: 'India',
-      latitude: Number(effectiveLatitude),
-      longitude: Number(effectiveLongitude),
-      is_default: false,
-      phone: `+91${phoneDigits}`,
-    };
+    setIsSavingAddress(true);
 
-    setLocalAddresses((previous) => [saved, ...previous]);
-    setSelectedSavedAddressId(localId);
-    setLocationAddress(fullAddress);
-    setLatitude(effectiveLatitude);
-    setLongitude(effectiveLongitude);
-    setShowAddAddressModal(false);
-    setLocationError(null);
-    setNewAddress('');
-    setNewPhone('');
-    setNewLatitude('');
-    setNewLongitude('');
-    setCurrentLatitude('');
-    setCurrentLongitude('');
-    setLocationSource('none');
+    try {
+      const query = showBookForUsers && selectedBookingUserId ? `?userId=${encodeURIComponent(selectedBookingUserId)}` : '';
+      const payload = await apiRequest<{ success: boolean; address: SavedAddress }>(`/api/bookings/user-addresses${query}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          label: 'Other',
+          addressLine1: fullAddress,
+          latitude: Number(effectiveLatitude),
+          longitude: Number(effectiveLongitude),
+          phone: `+91${phoneDigits}`,
+        }),
+      });
+
+      setSavedAddresses((previous) => [payload.address, ...previous]);
+      setSelectedSavedAddressId(payload.address.id);
+      setLocationAddress(formatSavedAddress(payload.address));
+      setLatitude(String(payload.address.latitude ?? effectiveLatitude));
+      setLongitude(String(payload.address.longitude ?? effectiveLongitude));
+      setShowAddAddressModal(false);
+      setLocationError(null);
+      setNewAddress('');
+      setNewPhone('');
+      setNewLatitude('');
+      setNewLongitude('');
+      setCurrentLatitude('');
+      setCurrentLongitude('');
+      setLocationSource('none');
+      showToast('Address saved successfully.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save address.';
+      setLocationError(message);
+      showToast(message, 'error');
+    } finally {
+      setIsSavingAddress(false);
+    }
   }
 
   const applyDiscountCandidates = useCallback(async (codes: string[], silent: boolean) => {
@@ -1183,16 +1212,17 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       errorMessage={apiError}
       loadingFallback={<div className="rounded-3xl border border-[#f2dfcf] bg-white p-6"><LoadingSkeleton lines={5} /></div>}
     >
-      <div className="grid gap-4" data-flow-state={flowState}>
-      <h3 className="text-lg font-semibold text-ink">Smart Booking Engine</h3>
-      <p className="mt-1 text-sm text-[#6b6b6b]">Choose a user (for staff), then provider, service, pet and slot.</p>
+      <div className="space-y-4 sm:space-y-5" data-flow-state={flowState}>
+      <h3 className="text-lg sm:text-xl font-semibold text-ink">Smart Booking Engine</h3>
+      <p className="mt-1 text-xs sm:text-sm text-neutral-600">Choose user, booking type, service/package, slot, provider, discount, and address.</p>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="mt-4 sm:mt-5 grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
+      <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
         {showBookForUsers ? (
-          <div className="sm:col-span-2 rounded-xl border border-[#f2dfcf] bg-white p-3">
-            <p className="mb-2 text-xs font-semibold text-ink">Book for user</p>
+          <div className="sm:col-span-2 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm">
+            <p className="mb-2 text-[13px] sm:text-sm font-semibold text-ink">Book for user</p>
             <form
-              className="flex gap-2"
+              className="flex flex-col gap-2 sm:flex-row"
               onSubmit={(event) => {
                 event.preventDefault();
                 void searchUsers();
@@ -1202,23 +1232,23 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 value={bookingUserSearch}
                 onChange={(event) => setBookingUserSearch(event.target.value)}
                 placeholder="Search user by email"
-                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+                className={controlClassName}
               />
               <button
                 type="submit"
                 disabled={isSearchingUsers}
-                className="rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink"
+                className="inline-flex h-11 sm:h-12 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-ink transition hover:border-coral/60"
               >
                 {isSearchingUsers ? 'Searching...' : 'Search'}
               </button>
             </form>
-            <div className="mt-2 max-h-44 space-y-1 overflow-auto">
+            <div className="mt-2 max-h-44 space-y-1.5 overflow-auto">
               {isSearchingUsers ? (
                 <p className="text-xs text-[#6b6b6b]">Searching users...</p>
               ) : !hasSearchedUsers ? (
                 <p className="text-xs text-[#6b6b6b]">Search by email and click Search.</p>
               ) : searchResults.length === 0 ? (
-                <p className="text-xs text-[#6b6b6b]">Your first booking starts here 🐾</p>
+                <p className="text-xs text-[#6b6b6b]">Your first booking starts here.</p>
               ) : (
                 searchResults.map((bookableUser) => {
                   const label = bookableUser.name?.trim() || bookableUser.email || bookableUser.id;
@@ -1229,26 +1259,34 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                       key={bookableUser.id}
                       type="button"
                       onClick={() => setSelectedBookingUserId(bookableUser.id)}
-                      className={`flex w-full items-start justify-between rounded-xl border px-3 py-2 text-left text-xs ${
+                      className={`flex w-full items-start justify-between rounded-xl border px-3 py-2 text-left text-xs transition ${
                         isSelected
-                          ? 'border-[#e76f51] bg-[#fff2ea] text-ink'
-                          : 'border-[#f2dfcf] bg-[#fffaf6] text-[#6b6b6b]'
+                          ? 'border-coral/50 bg-orange-50 text-ink shadow-sm'
+                          : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/40'
                       }`}
                     >
                       <span className="font-medium text-ink">{label}</span>
-                      {bookableUser.email ? <span className="ml-3 text-[11px] text-[#7a7a7a]">{bookableUser.email}</span> : null}
+                      {bookableUser.email ? <span className="ml-3 text-[11px] text-neutral-500">{bookableUser.email}</span> : null}
                     </button>
                   );
                 })
               )}
             </div>
+
+            {selectedBookingUser ? (
+              <div className="mt-3 rounded-xl border border-coral/20 bg-orange-50 px-3.5 sm:px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-coral">Selected user</p>
+                <p className="mt-1 text-sm font-semibold text-ink">{selectedBookingUser.name?.trim() || selectedBookingUser.email || selectedBookingUser.id}</p>
+                {selectedBookingUser.email ? <p className="text-xs text-neutral-600">{selectedBookingUser.email}</p> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
         <select
           value={providerId ?? ''}
           onChange={(event) => setProviderId(Number(event.target.value))}
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+          className={controlClassName}
         >
           {providers.length === 0 ? <option value="">No providers available</option> : null}
           {providers.map((provider) => (
@@ -1258,8 +1296,8 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           ))}
         </select>
 
-        <div className="rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-3">
-          <p className="mb-2 text-xs font-semibold text-ink">Booking Type</p>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm">
+          <p className="mb-2 text-[13px] sm:text-sm font-semibold text-ink">Booking Type</p>
           <div className="flex gap-2">
             <button
               type="button"
@@ -1268,10 +1306,10 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 setSelectedPackageId(null);
                 setSelectedCategoryId(null);
               }}
-              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+              className={`flex-1 rounded-xl border px-3 py-2.5 text-xs sm:text-sm font-medium transition ${
                 bookingType === 'service'
-                  ? 'border-[#e76f51] bg-[#fff2ea] text-ink'
-                  : 'border-[#f2dfcf] bg-white text-[#6b6b6b]'
+                  ? 'border-coral/50 bg-orange-50 text-ink'
+                  : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/30'
               }`}
             >
               Service
@@ -1282,10 +1320,10 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 setBookingType('package');
                 setServiceId(null);
               }}
-              className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+              className={`flex-1 rounded-xl border px-3 py-2.5 text-xs sm:text-sm font-medium transition ${
                 bookingType === 'package'
-                  ? 'border-[#e76f51] bg-[#fff2ea] text-ink'
-                  : 'border-[#f2dfcf] bg-white text-[#6b6b6b]'
+                  ? 'border-coral/50 bg-orange-50 text-ink'
+                  : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/30'
               }`}
             >
               Package
@@ -1301,7 +1339,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 setSelectedCategoryId(event.target.value);
                 setSelectedPackageId(null);
               }}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+              className={controlClassName}
             >
               <option value="">Select Category</option>
               {categories.map((category) => (
@@ -1315,7 +1353,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
               <select
                 value={selectedPackageId ?? ''}
                 onChange={(event) => setSelectedPackageId(event.target.value)}
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+                className={controlClassName}
               >
                 <option value="">Select Package</option>
                 {packages
@@ -1324,7 +1362,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                   )
                   .map((pkg) => (
                     <option key={pkg.id} value={pkg.id}>
-                      {pkg.name} {pkg.discount_type ? `(${pkg.discount_type === 'percentage' ? `${pkg.discount_value}%` : `₹${pkg.discount_value}`} off)` : ''}
+                      {pkg.name} {pkg.discount_type ? `(${pkg.discount_type === 'percentage' ? `${pkg.discount_value}%` : `Rs.${pkg.discount_value}`} off)` : ''}
                     </option>
                   ))}
               </select>
@@ -1333,27 +1371,27 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         ) : null}
 
         {bookingType === 'service' ? (
-          <div className="space-y-3">
+          <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm sm:col-span-2">
             <select
               value={serviceId ?? ''}
               onChange={(event) => setServiceId(event.target.value)}
-              className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+              className={controlClassName}
             >
               {providerServices.length === 0 ? <option value="">No active services</option> : null}
               {providerServices.map((service) => (
                 <option key={service.id} value={service.id}>
-                  {service.service_type} - ₹{service.base_price}
+                  {service.service_type} - Rs.{service.base_price}
                 </option>
               ))}
             </select>
 
             {serviceAddOns.length > 0 ? (
-              <div className="rounded-xl border border-[#f2dfcf] bg-[#fffaf6] p-3">
+              <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 sm:p-3">
                 <p className="text-xs font-semibold text-ink">Add-ons</p>
                 <div className="mt-2 space-y-2">
                   {serviceAddOns.map((addOn) => (
                     <label key={addOn.id} className="flex items-center justify-between gap-3 text-xs text-[#6b6b6b]">
-                      <span className="text-ink">{addOn.name} · ₹{addOn.price}</span>
+                      <span className="text-ink">{addOn.name} · Rs.{addOn.price}</span>
                       <input
                         type="number"
                         min={0}
@@ -1366,7 +1404,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                             [addOn.id]: quantity,
                           }));
                         }}
-                        className="w-20 rounded-lg border border-[#f2dfcf] px-2 py-1 text-xs"
+                        className="h-10 w-20 rounded-lg border border-neutral-200 px-2 py-1 text-xs"
                       />
                     </label>
                   ))}
@@ -1376,9 +1414,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           </div>
         ) : null}
 
-        <PriceBreakdownCard price={priceCalculation} isLoading={isCalculatingPrice} />
-
-        <select value={petId ?? ''} onChange={(event) => setPetId(Number(event.target.value))} className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
+        <select value={petId ?? ''} onChange={(event) => setPetId(Number(event.target.value))} className={controlClassName}>
           {pets.length === 0 ? <option value="">No pets found for selected user</option> : null}
           {pets.map((pet) => (
             <option key={pet.id} value={pet.id}>
@@ -1391,7 +1427,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           type="date"
           value={bookingDate}
           onChange={(event) => setBookingDate(event.target.value)}
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+          className={controlClassName}
         />
 
         <select
@@ -1400,9 +1436,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
             optimisticSlot.update(event.target.value);
             setSlotStartTime(event.target.value);
           }}
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm sm:col-span-2"
+          className={`${controlClassName} sm:col-span-2`}
         >
-          {slots.length === 0 ? <option value="">Your first booking starts here 🐾</option> : null}
+          {slots.length === 0 ? <option value="">Your first booking starts here.</option> : null}
           {slots.map((slotOption) => (
             <option key={`${slotOption.start_time}-${slotOption.end_time}`} value={slotOption.start_time}>
               {slotOption.start_time} - {slotOption.end_time}
@@ -1410,9 +1446,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           ))}
         </select>
 
-        <div className="sm:col-span-2 rounded-2xl bg-[#fffaf6] p-3">
-          <p className="text-xs font-semibold text-ink">Recommended Slots</p>
-          <div className="mt-2 flex flex-wrap gap-2">
+        <div className="sm:col-span-2 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Recommended Slots</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {recommendationSlots.length === 0 ? (
               <p className="text-xs text-[#6b6b6b]">Recommendations appear after loading slots.</p>
             ) : (
@@ -1424,14 +1460,17 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                     optimisticSlot.update(item.slot.start_time);
                     setSlotStartTime(item.slot.start_time);
                   }}
-                  className={`rounded-xl border px-3 py-2 text-left text-xs ${
+                  className={`rounded-xl border p-3 text-left text-xs transition-all hover:-translate-y-0.5 ${
                     slotStartTime === item.slot.start_time
-                      ? 'border-[#e76f51] bg-[#fff2ea] text-ink'
-                      : 'border-[#f2dfcf] bg-[#fffaf6] text-[#6b6b6b]'
+                      ? 'border-coral/50 bg-orange-50 text-ink shadow-sm'
+                      : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/40 hover:shadow-sm'
                   }`}
                 >
+                  <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-neutral-100 text-sm" aria-hidden="true">
+                    {item.label === 'Best' ? '⭐' : item.label === 'Fastest' ? '⚡' : '🧩'}
+                  </div>
                   <p className="font-semibold text-ink">{item.label}: {item.slot.start_time}-{item.slot.end_time}</p>
-                  <p>{item.reason}</p>
+                  <p className="mt-1 text-[11px] text-neutral-500">{item.reason}</p>
                 </button>
               ))
             )}
@@ -1441,7 +1480,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         <select
           value={bookingMode}
           onChange={(event) => setBookingMode(event.target.value as 'home_visit' | 'clinic_visit' | 'teleconsult')}
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+          className={controlClassName}
         >
           <option value="home_visit">Home Visit</option>
           <option value="clinic_visit">Clinic Visit</option>
@@ -1452,12 +1491,12 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           type="number"
           value={discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0}
           readOnly
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+          className={controlClassName}
           min={0}
         />
 
-        <div className="sm:col-span-2 rounded-2xl border border-[#f2dfcf] bg-[#fffaf6] p-3">
-          <p className="text-xs font-semibold text-ink">Discount</p>
+        <div className="sm:col-span-2 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm">
+          <p className="text-[13px] sm:text-sm font-semibold text-ink">Discount</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <input
               value={discountCode}
@@ -1465,14 +1504,14 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 setDiscountCode(event.target.value.toUpperCase());
                 setDiscountPreview(null);
               }}
-              className="min-w-[220px] rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+              className={`${controlClassName} min-w-[220px]`}
               placeholder="Enter discount code"
             />
             <button
               type="button"
               onClick={applyDiscount}
               disabled={isPending}
-              className="rounded-full border border-[#f2dfcf] px-3 py-2 text-xs font-semibold text-ink"
+              className="inline-flex h-11 sm:h-12 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-ink transition hover:border-coral/60"
             >
               Apply
             </button>
@@ -1481,7 +1520,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                 type="button"
                 onClick={clearDiscount}
                 disabled={isPending}
-                className="rounded-full border border-[#f2dfcf] px-3 py-2 text-xs font-semibold text-ink"
+                className="inline-flex h-11 sm:h-12 items-center justify-center rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-ink transition hover:border-coral/60"
               >
                 Clear
               </button>
@@ -1499,7 +1538,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                       await applyDiscountCandidates([item.code], false);
                     });
                   }}
-                  className="rounded-full border border-[#f2dfcf] bg-white px-2.5 py-1 text-[11px] text-ink"
+                  className="rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-[11px] text-ink transition hover:border-coral/50"
                 >
                   {item.code} · {item.title}
                   {item.first_booking_only ? ' · New user' : ''}
@@ -1509,9 +1548,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           ) : null}
 
           <div className="mt-3 grid gap-1 text-xs text-[#6b6b6b]">
-            <p>Base amount: ₹{discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0}</p>
-            <p>Discount applied to service bill: ₹{discountPreview?.discountAmount ?? 0}</p>
-            <p className="font-semibold text-ink">Estimated payable to provider after service: ₹{discountPreview?.finalAmount ?? priceCalculation?.final_total ?? 0}</p>
+            <p>Base amount: Rs.{discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0}</p>
+            <p>Discount applied to service bill: Rs.{discountPreview?.discountAmount ?? 0}</p>
+            <p className="font-semibold text-ink">Estimated payable to provider after service: Rs.{discountPreview?.finalAmount ?? priceCalculation?.final_total ?? 0}</p>
           </div>
         </div>
 
@@ -1555,7 +1594,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                               className="font-semibold text-red-600 disabled:opacity-50"
                               aria-label="Confirm delete address"
                             >
-                              {deletingAddressId === address.id ? '…' : '✓'}
+                              {deletingAddressId === address.id ? '...' : '✓'}
                             </button>
                             <button
                               type="button"
@@ -1646,7 +1685,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                         disabled={isDetectingCurrentLocation}
                         className="rounded-xl border border-[#f2dfcf] bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-[#fff7f0] disabled:opacity-70"
                       >
-                        {isDetectingCurrentLocation ? 'Locating…' : 'Use Current Location'}
+                        {isDetectingCurrentLocation ? 'Locating...' : 'Use Current Location'}
                       </button>
                       <button
                         type="button"
@@ -1654,7 +1693,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                         disabled={isDetectingAddress}
                         className="rounded-xl border border-[#f2dfcf] bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-[#fff7f0] disabled:opacity-70"
                       >
-                        {isDetectingAddress ? 'Detecting…' : 'Detect from Address'}
+                        {isDetectingAddress ? 'Detecting...' : 'Detect from Address'}
                       </button>
                     </div>
 
@@ -1697,16 +1736,18 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
                     <button
                       type="button"
                       onClick={closeAddAddressModal}
-                      className="rounded-xl border border-[#f2dfcf] px-4 py-2 text-sm font-medium text-ink"
+                      disabled={isSavingAddress}
+                      className="rounded-xl border border-[#f2dfcf] px-4 py-2 text-sm font-medium text-ink disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Cancel
                     </button>
                     <button
                       type="button"
                       onClick={saveNewAddress}
-                      className="rounded-xl bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-4 py-2 text-sm font-semibold text-white"
+                      disabled={isSavingAddress}
+                      className="rounded-xl bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Save Address
+                      {isSavingAddress ? 'Saving...' : 'Save Address'}
                     </button>
                   </div>
                 </div>
@@ -1718,32 +1759,79 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         <input
           value={providerNotes}
           onChange={(event) => setProviderNotes(event.target.value)}
-          className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm sm:col-span-2"
+          className={`${controlClassName} sm:col-span-2`}
           placeholder="Booking notes (optional)"
         />
       </div>
 
-      <p className="mt-3 text-xs text-[#6b6b6b]">Payment is collected directly by the provider after service completion. No platform-side online payment processing is involved.</p>
+      <aside className="xl:sticky xl:top-6 xl:h-fit">
+        <div className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
+          <h4 className="text-[11px] sm:text-xs font-semibold uppercase tracking-wide text-neutral-500">Live Booking Summary</h4>
+          <div className="mt-3 sm:mt-4 space-y-2.5 sm:space-y-3 text-xs sm:text-sm">
+            <div className="rounded-xl bg-neutral-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-neutral-500">Service</p>
+              <p className="mt-1 font-semibold text-ink">{summaryServiceName}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">Date</p>
+                <p className="mt-1 text-xs sm:text-sm font-medium text-ink">{summaryDate}</p>
+              </div>
+              <div className="rounded-xl bg-neutral-50 p-3">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">Time</p>
+                <p className="mt-1 text-xs sm:text-sm font-medium text-ink">{summaryTime}</p>
+              </div>
+            </div>
+            <div className="rounded-xl bg-neutral-50 p-3">
+              <p className="text-xs uppercase tracking-wide text-neutral-500">Address</p>
+              <p className="mt-1 text-xs sm:text-sm font-medium text-ink">{summaryAddress}</p>
+            </div>
+          </div>
 
-      {flowState === 'success' && lastBookingSummary ? (
-        <PremiumBookingConfirmation
-          bookingDate={lastBookingSummary.bookingDate}
-          slotStartTime={lastBookingSummary.slotStartTime}
-          bookingMode={lastBookingSummary.bookingMode}
-          providerName={lastBookingSummary.providerName}
-          petName={lastBookingSummary.petName}
-          totalAmount={lastBookingSummary.totalAmount}
-        />
-      ) : null}
+          <div className="mt-3 sm:mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3 sm:p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Price Breakdown</p>
+            <div className="mt-2 space-y-1 text-xs sm:text-sm text-neutral-700">
+              <div className="flex items-center justify-between">
+                <span>Base amount</span>
+                <span>₹{summaryBaseAmount}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Discount</span>
+                <span>- ₹{summaryDiscountAmount}</span>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between border-t border-neutral-200 pt-3">
+              <span className="text-xs sm:text-sm font-semibold text-ink">Total</span>
+              <span className="text-xl sm:text-2xl font-bold text-ink">₹{summaryTotalAmount}</span>
+            </div>
+          </div>
 
-      <button
-        type="button"
-        onClick={submitBooking}
-        disabled={isPending}
-        className="mt-5 inline-flex items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-6 py-3 text-sm font-semibold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {isPending ? 'Booking...' : 'Create Booking'}
-      </button>
+          <p className="mt-4 text-xs text-neutral-500">Payment is collected directly by the provider after service completion. No platform-side online payment processing is involved.</p>
+
+          <button
+            type="button"
+            onClick={submitBooking}
+            disabled={isPending}
+            className="mt-4 inline-flex h-11 sm:h-12 w-full items-center justify-center rounded-xl bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-6 text-sm font-semibold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isPending ? 'Booking...' : 'Create Booking'}
+          </button>
+        </div>
+
+        {flowState === 'success' && lastBookingSummary ? (
+          <div className="mt-4">
+            <PremiumBookingConfirmation
+              bookingDate={lastBookingSummary.bookingDate}
+              slotStartTime={lastBookingSummary.slotStartTime}
+              bookingMode={lastBookingSummary.bookingMode}
+              providerName={lastBookingSummary.providerName}
+              petName={lastBookingSummary.petName}
+              totalAmount={lastBookingSummary.totalAmount}
+            />
+          </div>
+        ) : null}
+      </aside>
+      </div>
       </div>
     </AsyncState>
   );

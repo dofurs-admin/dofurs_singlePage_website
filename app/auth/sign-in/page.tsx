@@ -22,6 +22,12 @@ type CompleteProfilePayload = {
   gender: string;
 };
 
+type UserRoleProfileResponse = {
+  profile?: {
+    roles?: { name?: string | null } | Array<{ name?: string | null }> | null;
+  };
+};
+
 function getRetryAfterSeconds(rawMessage: string) {
   const message = rawMessage.toLowerCase();
   const match = message.match(/(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m)\b/);
@@ -190,7 +196,27 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         return;
       }
 
-      router.replace(nextPath);
+      let redirectPath = nextPath;
+
+      try {
+        const roleResponse = await fetch('/api/user/profile', { method: 'GET', cache: 'no-store' });
+
+        if (roleResponse.ok) {
+          const rolePayload = (await roleResponse.json()) as UserRoleProfileResponse;
+          const roleRecord = Array.isArray(rolePayload.profile?.roles)
+            ? rolePayload.profile?.roles[0]
+            : rolePayload.profile?.roles;
+          const roleName = roleRecord?.name ?? null;
+
+          if (roleName === 'admin' || roleName === 'staff') {
+            redirectPath = '/dashboard/admin';
+          }
+        }
+      } catch {
+        // Fall back to nextPath when role lookup is unavailable
+      }
+
+      router.replace(redirectPath);
       router.refresh();
     }
 

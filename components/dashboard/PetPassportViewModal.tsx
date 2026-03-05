@@ -1,7 +1,7 @@
 'use client';
 
-import Image from 'next/image';
 import Modal from '@/components/ui/Modal';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type VaccinationRecord = {
   id: string;
@@ -174,12 +174,12 @@ export default function PetPassportViewModal({ isOpen, onClose, data, photoUrl, 
                 <div className="flex-shrink-0">
                   <div className="relative w-32 h-32 md:w-40 md:h-40 rounded-2xl overflow-hidden border-4 border-white shadow-lg">
                     {photoUrl ? (
-                      <Image
-                        src={photoUrl}
+                      <StorageBackedImage
+                        value={photoUrl}
+                        bucket="pet-photos"
                         alt={`${data.pet.name} photo`}
                         width={160}
                         height={160}
-                        unoptimized
                         className="w-full h-full object-cover"
                       />
                     ) : (

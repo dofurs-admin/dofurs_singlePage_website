@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import Image from 'next/image';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
+import StorageBackedImage from './StorageBackedImage';
 
 type BucketName = 'user-photos' | 'pet-photos' | 'service-images';
 
@@ -49,8 +49,8 @@ export default function ImageUploadField({
     setUploadError(null);
 
     try {
-      const { signedUrl } = await uploadCompressedImage(file, bucket);
-      onChange(signedUrl);
+      const { path } = await uploadCompressedImage(file, bucket);
+      onChange(path);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'Upload failed');
     } finally {
@@ -101,12 +101,12 @@ export default function ImageUploadField({
 
       {showPreview && value && !uploadError && (
         <div className="relative h-24 w-32 overflow-hidden rounded-lg border border-[#f2dfcf]">
-          <Image
-            src={value}
+          <StorageBackedImage
+            value={value}
             alt="Preview"
+            bucket={bucket}
             fill
             className="object-cover"
-            unoptimized
           />
         </div>
       )}

@@ -40,12 +40,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    const effectiveBookingType = parsed.data.bookingType ?? 'service';
+
     // Security: Never trust client-provided finalPrice or discountAmount
     // All pricing calculated server-side in DB RPC
     const bookingInput = {
       petId: parsed.data.petId,
       providerId: parsed.data.providerId,
-      providerServiceId: parsed.data.bookingType === 'service' ? parsed.data.providerServiceId : undefined,
+      providerServiceId: effectiveBookingType === 'service' ? parsed.data.providerServiceId : undefined,
       bookingDate: parsed.data.bookingDate,
       startTime: parsed.data.startTime,
       bookingMode: parsed.data.bookingMode,
@@ -53,8 +55,8 @@ export async function POST(request: Request) {
       latitude: parsed.data.latitude,
       longitude: parsed.data.longitude,
       providerNotes: parsed.data.providerNotes,
-      bookingType: parsed.data.bookingType ?? 'service',
-      packageId: parsed.data.bookingType === 'package' ? parsed.data.packageId : undefined,
+      bookingType: effectiveBookingType,
+      packageId: effectiveBookingType === 'package' ? parsed.data.packageId : undefined,
       discountCode: parsed.data.discountCode,
       // Client pricing removed - calculated server-side only
       addOns: parsed.data.addOns,
@@ -66,7 +68,13 @@ export async function POST(request: Request) {
   } catch (error) {
     const mapped = toFriendlyApiError(error, 'Booking failed');
 
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage =
+      error instanceof Error
+        ? error.message
+        : error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string'
+          ? ((error as { message: string }).message ?? '').trim()
+          : '';
+    const message = rawMessage || mapped.message;
     if (mapped.status === 409 || isSlotConflictMessage(message)) {
       logSecurityEvent('warn', 'booking.slot_conflict', {
         route: 'api/bookings/create',

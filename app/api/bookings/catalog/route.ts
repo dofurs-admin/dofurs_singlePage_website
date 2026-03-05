@@ -176,10 +176,13 @@ export async function GET(request: Request) {
       });
   }
 
-  let selectedUserId = canBookForUsers ? parsed.data.userId ?? user.id : user.id;
+  let selectedUserId: string | null;
 
-  if (canBookForUsers && bookableUsers.length > 0 && !bookableUsers.some((item) => item.id === selectedUserId)) {
-    selectedUserId = bookableUsers[0].id;
+  if (canBookForUsers) {
+    const requestedUserId = parsed.data.userId ?? null;
+    selectedUserId = requestedUserId && bookableUsers.some((item) => item.id === requestedUserId) ? requestedUserId : null;
+  } else {
+    selectedUserId = user.id;
   }
 
   const providersRequest = providerFilterId
@@ -189,25 +192,32 @@ export async function GET(request: Request) {
   const providerServicesRequest = providerFilterId
     ? supabase
         .from('provider_services')
-        .select('id, provider_id, service_type, base_price, service_duration_minutes, is_active')
+      .select('id, provider_id, service_type, service_mode, base_price, service_duration_minutes, is_active')
         .eq('provider_id', providerFilterId)
         .eq('is_active', true)
         .order('service_type', { ascending: true })
     : supabase
         .from('provider_services')
-        .select('id, provider_id, service_type, base_price, service_duration_minutes, is_active')
+      .select('id, provider_id, service_type, service_mode, base_price, service_duration_minutes, is_active')
         .eq('is_active', true)
         .order('service_type', { ascending: true });
 
-  const petsClient = canBookForUsers && selectedUserId !== user.id ? adminClient : supabase;
-  const petsRequest = petsClient.from('pets').select('id, name').eq('user_id', selectedUserId).order('name', { ascending: true });
-  const addressesClient = canBookForUsers && selectedUserId !== user.id ? adminClient : supabase;
-  const addressesRequest = addressesClient
-    .from('user_addresses')
-    .select('id, label, address_line_1, address_line_2, city, state, pincode, country, latitude, longitude, is_default')
-    .eq('user_id', selectedUserId)
-    .order('is_default', { ascending: false })
-    .order('created_at', { ascending: false });
+  const petsRequest = selectedUserId
+    ? (canBookForUsers && selectedUserId !== user.id ? adminClient : supabase)
+        .from('pets')
+        .select('id, name')
+        .eq('user_id', selectedUserId)
+        .order('name', { ascending: true })
+    : Promise.resolve({ data: [], error: null });
+
+  const addressesRequest = selectedUserId
+    ? (canBookForUsers && selectedUserId !== user.id ? adminClient : supabase)
+        .from('user_addresses')
+        .select('id, label, address_line_1, address_line_2, city, state, pincode, country, latitude, longitude, is_default')
+        .eq('user_id', selectedUserId)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+    : Promise.resolve({ data: [], error: null });
 
   const [providersResult, providerServicesResult, petsResult, addressesResult] = await Promise.all([
     providersRequest,
@@ -246,6 +256,7 @@ export async function GET(request: Request) {
       id: item.id,
       provider_id: item.provider_id,
       service_type: item.service_type,
+      service_mode: item.service_mode ?? 'home_visit',
       service_duration_minutes: item.service_duration_minutes ?? 30,
       buffer_minutes: 0,
       base_price: item.base_price,

@@ -18,6 +18,7 @@ import EmptyState from './EmptyState';
 import SegmentedControl from './SegmentedControl';
 import ProgressRing from './ProgressRing';
 import PetPassportViewModal from './PetPassportViewModal';
+import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Pet = {
   id: number;
@@ -506,7 +507,6 @@ function stepIndexFromFieldPath(path: string) {
 export default function UserPetProfilesClient({ initialPets }: { initialPets: Pet[] }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [pets, setPets] = useState(initialPets);
-  const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [petCompletions, setPetCompletions] = useState<Record<number, number>>({});
   const [expandedVaccinations, setExpandedVaccinations] = useState<Record<number, boolean>>({});
   const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<number, boolean>>({});
@@ -621,59 +621,6 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const missingSteps = useMemo(() => {
     return STEPS.map((label, index) => ({ label, index })).filter((item) => !stepCompletion[item.index]);
   }, [stepCompletion]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function hydratePhotoUrls() {
-      const entries = await Promise.all(
-        pets.map(async (pet): Promise<[number, string]> => {
-          if (!pet.photo_url) {
-            return [pet.id, ''];
-          }
-
-          if (/^https?:\/\//i.test(pet.photo_url)) {
-            return [pet.id, pet.photo_url];
-          }
-
-          const response = await fetch('/api/storage/signed-read-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              bucket: 'pet-photos',
-              path: pet.photo_url,
-              expiresIn: 3600,
-            }),
-          });
-
-          if (!response.ok) {
-            return [pet.id, ''];
-          }
-
-          const payload = (await response.json().catch(() => null)) as { signedUrl?: string } | null;
-          return [pet.id, payload?.signedUrl ?? ''];
-        }),
-      );
-
-      if (!active) {
-        return;
-      }
-
-      const next: Record<number, string> = {};
-      entries.forEach(([id, url]) => {
-        if (url) {
-          next[id] = url;
-        }
-      });
-      setPhotoUrls(next);
-    }
-
-    hydratePhotoUrls();
-
-    return () => {
-      active = false;
-    };
-  }, [pets]);
 
   useEffect(() => {
     let active = true;
@@ -1808,6 +1755,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
           <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {pets.map((pet) => {
               const completion = petCompletions[pet.id] ?? 0;
+              const petPhotoValue = pet.photo_url ?? '';
               const completionStatus = completion === 100 ? 'complete' : completion >= 70 ? 'high' : completion >= 40 ? 'medium' : 'low';
               const statusConfig = {
                 complete: { label: 'Complete', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
@@ -1824,13 +1772,13 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                 >
                   {/* Pet Photo */}
                   <div className="relative h-36 overflow-hidden">
-                    {photoUrls[pet.id] ? (
-                      <Image
-                        src={photoUrls[pet.id]}
+                    {petPhotoValue ? (
+                      <StorageBackedImage
+                        value={petPhotoValue}
+                        bucket="pet-photos"
                         alt={`${pet.name} photo`}
                         width={720}
                         height={360}
-                        unoptimized
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
                     ) : (
@@ -1991,7 +1939,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
               petName={selectedPet.name}
               breed={selectedPet.breed}
               age={selectedPet.age}
-              photoUrl={photoUrls[selectedPet.id]}
+              photoUrl={selectedPet.photo_url ?? null}
               completionPercent={completionPercent}
               lastSavedAt={lastDraftSavedAt}
             />
@@ -2300,7 +2248,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         isOpen={showViewModal}
         onClose={() => setShowViewModal(false)}
         data={viewModalData}
-        photoUrl={viewModalData ? photoUrls[viewModalData.pet.id] : null}
+        photoUrl={viewModalData ? (viewModalData.pet.photo_url ?? null) : null}
         isLoading={isLoadingViewData}
       />
     </div>
