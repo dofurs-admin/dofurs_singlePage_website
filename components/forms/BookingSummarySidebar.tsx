@@ -37,7 +37,9 @@ type BookingStep = 'service' | 'pet' | 'datetime' | 'review';
 
 interface BookingSummarySidebarProps {
   step: BookingStep;
+  bookingType: 'service' | 'package';
   service: Service | undefined;
+  packageName?: string;
   pet: Pet | undefined;
   provider: Provider | undefined;
   bookingDate: string;
@@ -51,7 +53,9 @@ interface BookingSummarySidebarProps {
 
 export default function BookingSummarySidebar({
   step,
+  bookingType,
   service,
+  packageName,
   pet,
   provider,
   bookingDate,
@@ -154,13 +158,21 @@ export default function BookingSummarySidebar({
             </div>
           )}
 
-          {service && (
+          {bookingType === 'package' && packageName ? (
+            <div>
+              <p className="text-xs font-semibold text-neutral-600 uppercase">Package</p>
+              <p className="mt-1 font-medium text-neutral-950">{packageName}</p>
+              <p className="text-xs text-neutral-600">Includes multiple services</p>
+            </div>
+          ) : null}
+
+          {bookingType === 'service' && service ? (
             <div>
               <p className="text-xs font-semibold text-neutral-600 uppercase">Service</p>
               <p className="mt-1 font-medium text-neutral-950">{service.service_type}</p>
               <p className="text-xs text-neutral-600">₹{service.base_price} • {service.service_duration_minutes} mins</p>
             </div>
-          )}
+          ) : null}
 
           {pet && (
             <div>

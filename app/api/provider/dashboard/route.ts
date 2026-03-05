@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
 import { getProviderDashboard } from '@/lib/provider-management/service';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 export async function GET() {
   const { user, role, supabase } = await getApiAuthContext();
@@ -17,7 +18,7 @@ export async function GET() {
     const dashboard = await getProviderDashboard(supabase, user.id);
     return NextResponse.json({ dashboard });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to load provider dashboard';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to load provider dashboard');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

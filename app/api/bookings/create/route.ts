@@ -1,17 +1,20 @@
 import { NextResponse } from 'next/server';
 import { createBooking } from '@/lib/bookings/service';
-import { getApiAuthContext, forbidden, unauthorized } from '@/lib/auth/api-auth';
+import { forbidden, requireApiRole } from '@/lib/auth/api-auth';
 import { getProviderIdByUserId } from '@/lib/provider-management/api';
 import { bookingCreateSchema } from '@/lib/flows/validation';
 import { toFriendlyApiError } from '@/lib/api/errors';
 import { assertRoleCanCreateBookingForUser } from '@/lib/bookings/state-transition-guard';
+import { isSlotConflictMessage, logSecurityEvent } from '@/lib/monitoring/security-log';
 
 export async function POST(request: Request) {
-  const { supabase, user, role } = await getApiAuthContext();
+  const auth = await requireApiRole(['user', 'provider', 'admin', 'staff']);
 
-  if (!user) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
+
+  const { supabase, user, role } = auth.context;
 
   const body = await request.json().catch(() => null);
   const parsed = bookingCreateSchema.safeParse(body);
@@ -37,6 +40,8 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Security: Never trust client-provided finalPrice or discountAmount
+    // All pricing calculated server-side in DB RPC
     const bookingInput = {
       petId: parsed.data.petId,
       providerId: parsed.data.providerId,
@@ -51,8 +56,7 @@ export async function POST(request: Request) {
       bookingType: parsed.data.bookingType ?? 'service',
       packageId: parsed.data.bookingType === 'package' ? parsed.data.packageId : undefined,
       discountCode: parsed.data.discountCode,
-      discountAmount: parsed.data.bookingType === 'package' ? parsed.data.discountAmount : undefined,
-      finalPrice: parsed.data.bookingType === 'package' ? parsed.data.finalPrice : undefined,
+      // Client pricing removed - calculated server-side only
       addOns: parsed.data.addOns,
     };
 
@@ -61,6 +65,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, booking });
   } catch (error) {
     const mapped = toFriendlyApiError(error, 'Booking failed');
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (mapped.status === 409 || isSlotConflictMessage(message)) {
+      logSecurityEvent('warn', 'booking.slot_conflict', {
+        route: 'api/bookings/create',
+        actorId: user.id,
+        actorRole: role,
+        targetId: parsed.data.providerId,
+        message,
+        metadata: {
+          bookingDate: parsed.data.bookingDate,
+          startTime: parsed.data.startTime,
+          bookingMode: parsed.data.bookingMode,
+        },
+      });
+    }
+
+    logSecurityEvent('error', 'booking.failure', {
+      route: 'api/bookings/create',
+      actorId: user.id,
+      actorRole: role,
+      targetId: parsed.data.providerId,
+      message,
+      metadata: {
+        status: mapped.status,
+      },
+    });
+
     return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

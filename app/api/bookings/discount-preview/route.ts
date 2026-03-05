@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
 import { evaluateDiscountForBooking } from '@/lib/bookings/discounts';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 const previewSchema = z.object({
   providerServiceId: z.string().uuid(),
@@ -29,15 +30,25 @@ export async function POST(request: Request) {
     return forbidden();
   }
 
-  const { data: service, error: serviceError } = await supabase
-    .from('provider_services')
-    .select('id, service_type, base_price, is_active')
-    .eq('id', parsed.data.providerServiceId)
-    .eq('is_active', true)
-    .maybeSingle<{ id: string; service_type: string; base_price: number; is_active: boolean }>();
+  let service: { id: string; service_type: string; base_price: number; is_active: boolean } | null;
 
-  if (serviceError) {
-    return NextResponse.json({ error: serviceError.message }, { status: 500 });
+  try {
+    const { data, error } = await supabase
+      .from('provider_services')
+      .select('id, service_type, base_price, is_active')
+      .eq('id', parsed.data.providerServiceId)
+      .eq('is_active', true)
+      .maybeSingle<{ id: string; service_type: string; base_price: number; is_active: boolean }>();
+
+    if (error) {
+      const mapped = toFriendlyApiError(error, 'Failed to load service details');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
+    }
+
+    service = data;
+  } catch (error) {
+    const mapped = toFriendlyApiError(error, 'Failed to load service details');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   if (!service) {
@@ -61,7 +72,7 @@ export async function POST(request: Request) {
       preview: evaluation.preview,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to preview discount';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to preview discount');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

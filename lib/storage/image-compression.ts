@@ -2,7 +2,7 @@
 
 import imageCompression from 'browser-image-compression';
 
-export type ImageCompressionTarget = 'user-photos' | 'pet-photos';
+export type ImageCompressionTarget = 'user-photos' | 'pet-photos' | 'service-images';
 
 const compressionConfig: Record<
   ImageCompressionTarget,
@@ -21,6 +21,11 @@ const compressionConfig: Record<
     maxSizeMB: 0.3,
     maxWidthOrHeight: 960,
     initialQuality: 0.72,
+  },
+  'service-images': {
+    maxSizeMB: 0.5,
+    maxWidthOrHeight: 1280,
+    initialQuality: 0.75,
   },
 };
 

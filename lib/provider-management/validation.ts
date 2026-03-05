@@ -1,9 +1,19 @@
 import { z } from 'zod';
 import { PROVIDER_TYPES } from './types';
 
+const providerTypeSchema = z.union([
+  z.enum(PROVIDER_TYPES),
+  z
+    .string()
+    .trim()
+    .min(2)
+    .max(64)
+    .regex(/^[a-z][a-z0-9_]*$/, 'Custom provider type must use lowercase letters, numbers, and underscores'),
+]);
+
 export const providerProfileUpdateSchema = z.object({
   bio: z.string().trim().max(5000).nullable().optional(),
-  profile_photo_url: z.string().trim().max(500).nullable().optional(),
+  profile_photo_url: z.string().trim().max(2000).nullable().optional(),
   years_of_experience: z.number().int().min(0).nullable().optional(),
   phone_number: z.string().trim().max(30).nullable().optional(),
   email: z.string().trim().email().max(255).nullable().optional(),
@@ -11,10 +21,10 @@ export const providerProfileUpdateSchema = z.object({
 });
 
 export const createProviderSchema = z.object({
-  provider_type: z.enum(PROVIDER_TYPES),
+  provider_type: providerTypeSchema,
   is_individual: z.boolean(),
   business_name: z.string().trim().max(255).nullable().optional(),
-  profile_photo_url: z.string().trim().max(500).nullable().optional(),
+  profile_photo_url: z.string().trim().max(2000).nullable().optional(),
   bio: z.string().trim().max(5000).nullable().optional(),
   years_of_experience: z.number().int().min(0).nullable().optional(),
   phone_number: z.string().trim().max(30).nullable().optional(),
@@ -135,7 +145,18 @@ export const providerPricingSchema = z.array(providerPricingItemSchema).min(1);
 
 const indianPincodeSchema = z.string().trim().regex(/^[1-9]\d{5}$/);
 
-export const adminProviderServiceRolloutItemSchema = providerPricingItemSchema.extend({
+export const adminProviderServiceRolloutItemSchema = providerPricingItemSchema
+  .omit({
+    base_price: true,
+    surge_price: true,
+    commission_percentage: true,
+    service_duration_minutes: true,
+  })
+  .extend({
+    base_price: z.number().min(0).optional(),
+    surge_price: z.number().min(0).nullable().optional(),
+    commission_percentage: z.number().min(0).max(100).nullable().optional(),
+    service_duration_minutes: z.number().int().positive().nullable().optional(),
   service_pincodes: z.array(indianPincodeSchema).max(200).optional(),
 });
 
@@ -199,6 +220,19 @@ export const adminProviderLocationUpdateSchema = z
         });
       }
     }
+  });
+
+export const adminProviderProfileUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120).optional(),
+    email: z.string().trim().email().max(255).nullable().optional(),
+    provider_type: providerTypeSchema.optional(),
+    business_name: z.string().trim().max(255).nullable().optional(),
+    profile_photo_url: z.string().trim().max(2000).nullable().optional(),
+    service_radius_km: z.number().min(0).max(500).nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'At least one field is required.',
   });
 
 export const discountTypeSchema = z.enum(['percentage', 'flat']);

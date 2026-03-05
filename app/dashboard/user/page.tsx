@@ -35,8 +35,13 @@ export default async function UserDashboardPage({ searchParams }: UserDashboardP
       .order('booking_start', { ascending: false }),
   ]);
 
+  const userName = (user.user_metadata?.name as string) || user.email || 'User';
+  const firstName = userName.split(' ')[0];
+
   return (
     <UserDashboardClient
+      userId={user.id}
+      userName={firstName}
       initialPets={petsResult.data ?? []}
       initialBookings={bookingsResult.data ?? []}
       view={view}

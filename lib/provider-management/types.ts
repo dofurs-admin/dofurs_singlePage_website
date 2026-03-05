@@ -10,7 +10,8 @@ export const PROVIDER_TYPES = [
   'retailer',
 ] as const;
 
-export type ProviderType = (typeof PROVIDER_TYPES)[number];
+export type PresetProviderType = (typeof PROVIDER_TYPES)[number];
+export type ProviderType = PresetProviderType | (string & {});
 
 export type ProviderVerificationStatus = 'pending' | 'approved' | 'rejected';
 export type ProviderAccountStatus = 'active' | 'suspended' | 'banned';
@@ -127,6 +128,7 @@ export type ProviderReview = {
 export type CreateProviderInput = {
   provider_type: ProviderType;
   is_individual: boolean;
+  address?: string | null;
   business_name?: string | null;
   profile_photo_url?: string | null;
   bio?: string | null;
@@ -184,11 +186,12 @@ export type UpdateProviderPricingInput = Array<
 >;
 
 export type AdminProviderServiceRolloutInput = Array<
-  Pick<
-    ProviderService,
-    'service_type' | 'base_price' | 'surge_price' | 'commission_percentage' | 'service_duration_minutes' | 'is_active'
-  > & {
+  Pick<ProviderService, 'service_type' | 'is_active'> & {
     id?: string;
+    base_price?: number;
+    surge_price?: number | null;
+    commission_percentage?: number | null;
+    service_duration_minutes?: number | null;
     service_pincodes?: string[];
   }
 >;
@@ -349,6 +352,15 @@ export type UpdateAdminProviderLocationInput = Partial<
   Pick<AdminProviderLocationModeration, 'address' | 'city' | 'state' | 'pincode' | 'latitude' | 'longitude' | 'service_radius_km'>
 >;
 
+export type UpdateAdminProviderProfileInput = {
+  name?: string;
+  email?: string | null;
+  provider_type?: ProviderType;
+  business_name?: string | null;
+  profile_photo_url?: string | null;
+  service_radius_km?: number | null;
+};
+
 export type ProviderReviewsQuery = {
   page?: number;
   pageSize?: number;
@@ -366,6 +378,8 @@ export type ProviderReviewsPage = {
 export type AdminProviderModerationItem = {
   id: number;
   name: string;
+  email: string | null;
+  profile_photo_url: string | null;
   provider_type: ProviderType;
   business_name: string | null;
   admin_approval_status: ProviderVerificationStatus;

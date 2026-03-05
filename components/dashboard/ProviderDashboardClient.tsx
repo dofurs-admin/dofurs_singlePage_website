@@ -1,11 +1,21 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import { bookingTimelineLabel } from '@/lib/bookings/timeline';
 import type { ProviderDashboard, ProviderReview } from '@/lib/provider-management/types';
 import { apiRequest } from '@/lib/api/client';
+import { useProviderBookingRealtime, useProviderApprovalRealtime, useOptimisticUpdate } from '@/lib/hooks/useRealtime';
+import { cn } from '@/lib/design-system';
+
+// Premium Components
+import DashboardPageLayout from './premium/DashboardPageLayout';
+import PremiumCard from './premium/PremiumCard';
+import StatCard from './premium/StatCard';
+import StatusBadge from './premium/StatusBadge';
+
+// UI Components
+import { Button, Input, Card, Alert, Badge } from '@/components/ui';
 
 const WEEK_DAYS = [
   { label: 'Sunday', day: 0 },
@@ -34,6 +44,11 @@ type ProviderBooking = {
   booking_mode: 'home_visit' | 'clinic_visit' | 'teleconsult';
   service_type: string | null;
   provider_notes: string | null;
+  completion_task_status?: 'pending' | 'completed' | null;
+  completion_due_at?: string | null;
+  completion_completed_at?: string | null;
+  completion_feedback_text?: string | null;
+  requires_completion_feedback?: boolean;
 };
 
 type ProviderBlockedDate = {
@@ -57,8 +72,10 @@ export default function ProviderDashboardClient({
   view?: ProviderDashboardView;
 }) {
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(initialDashboard);
+  const [providerBookings, setProviderBookings] = useState<ProviderBooking[]>([]);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
+  const { performUpdate } = useOptimisticUpdate(providerBookings, setProviderBookings);
 
   const [profileForm, setProfileForm] = useState({
     bio: initialDashboard?.provider.bio ?? '',
@@ -122,10 +139,33 @@ export default function ProviderDashboardClient({
   });
   const [reviewFilter, setReviewFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>('all');
   const [responseHistory, setResponseHistory] = useState<Record<string, Array<{ id: string; created_at: string; previous_response: string | null; new_response: string }>>>({});
-  const [providerBookings, setProviderBookings] = useState<ProviderBooking[]>([]);
   const [bookingFilter, setBookingFilter] = useState<'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'>('all');
   const [blockedDates, setBlockedDates] = useState<ProviderBlockedDate[]>([]);
   const [newBlockedDate, setNewBlockedDate] = useState({ blockedDate: '', reason: '' });
+  const [completionFeedbackDraft, setCompletionFeedbackDraft] = useState<Record<number, string>>({});
+
+  // Realtime subscriptions
+  const refreshBookings = useCallback(async () => {
+    if (!dashboard?.provider.id) return;
+    try {
+      const response = await apiRequest<{ bookings: ProviderBooking[] }>('/api/provider/bookings');
+      setProviderBookings(response.bookings ?? []);
+    } catch (error) {
+      console.error('Failed to refresh bookings:', error);
+    }
+  }, [dashboard?.provider.id]);
+
+  const refreshDashboard = useCallback(async () => {
+    try {
+      const response = await providerRequest<ProviderDashboard>('/api/provider/dashboard');
+      setDashboard(response);
+    } catch (error) {
+      console.error('Failed to refresh dashboard:', error);
+    }
+  }, []);
+
+  useProviderBookingRealtime(dashboard?.provider.id, refreshBookings);
+  useProviderApprovalRealtime(dashboard?.provider.id, refreshDashboard);
 
   useEffect(() => {
     if (!dashboard) {
@@ -294,11 +334,6 @@ export default function ProviderDashboardClient({
     throw lastError ?? new Error('Request failed');
   }, []);
 
-  const refreshDashboard = useCallback(async () => {
-    const response = await providerRequest<{ dashboard: ProviderDashboard | null }>('/api/provider/dashboard');
-    setDashboard(response.dashboard);
-  }, [providerRequest]);
-
   const fetchReviews = useCallback(async (page: number, filter: 'all' | '1' | '2' | '3' | '4' | '5') => {
     const params = new URLSearchParams();
     params.set('page', String(page));
@@ -318,7 +353,8 @@ export default function ProviderDashboardClient({
 
   const fetchProviderBookings = useCallback(async (filter: 'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show') => {
     const params = new URLSearchParams();
-    params.set('fromDate', new Date().toISOString().slice(0, 10));
+    const fromDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    params.set('fromDate', fromDate);
     params.set('limit', '200');
 
     if (filter !== 'all') {
@@ -358,19 +394,40 @@ export default function ProviderDashboardClient({
     bookingId: number,
     status: 'confirmed' | 'completed' | 'no_show' | 'cancelled',
     providerNotes?: string,
+    completionFeedback?: string,
   ) {
-    startTransition(async () => {
-      try {
-        await providerRequest(`/api/provider/bookings/${bookingId}/status`, {
+    // Optimistic update: immediately update booking status
+    performUpdate(
+      (current) => current.map((booking) => 
+        booking.id === bookingId 
+          ? {
+              ...booking,
+              booking_status: status,
+              provider_notes: providerNotes ?? booking.provider_notes,
+              completion_task_status: status === 'completed' ? 'completed' : booking.completion_task_status,
+              completion_completed_at: status === 'completed' ? new Date().toISOString() : booking.completion_completed_at,
+              completion_feedback_text:
+                status === 'completed' ? (completionFeedback ?? providerNotes ?? booking.completion_feedback_text ?? null) : booking.completion_feedback_text,
+              requires_completion_feedback: status === 'completed' ? false : booking.requires_completion_feedback,
+            }
+          : booking
+      ),
+      async () => {
+        const response = await fetch(`/api/provider/bookings/${bookingId}/status`, {
           method: 'PATCH',
-          body: JSON.stringify({ status, providerNotes }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ status, providerNotes, completionFeedback }),
         });
-        await fetchProviderBookings(bookingFilter);
-        showToast('Booking updated.', 'success');
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : 'Unable to update booking status.', 'error');
-      }
-    });
+
+        if (!response.ok) {
+          throw new Error('Failed to update booking status');
+        }
+      },
+      () => showToast('Booking updated.', 'success'),
+      () => showToast('Unable to update booking status.', 'error'),
+    );
   }
 
   function addBlockedDate() {
@@ -659,89 +716,34 @@ export default function ProviderDashboardClient({
 
   if (!dashboard) {
     return (
-      <div className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Provider Dashboard</h2>
-        <p className="mt-2 text-sm text-[#6b6b6b]">
+      <Card>
+        <h2 className="text-card-title">Provider Dashboard</h2>
+        <p className="mt-3 text-body text-neutral-600">
           Provider profile is not linked yet. Complete onboarding to access dashboard controls.
         </p>
-      </div>
+      </Card>
     );
   }
 
+  const dashboardTabs = [
+    { id: 'overview', label: 'Overview', href: '/dashboard/provider' },
+    { id: 'operations', label: 'Operations', href: '/dashboard/provider?view=operations' },
+    { id: 'profile', label: 'Profile Studio', href: '/dashboard/provider?view=profile' },
+  ];
+
   return (
-    <div className="grid gap-5">
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-4 shadow-soft-md">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-ink">Provider Dashboard</h2>
-            <p className="mt-1 text-xs text-[#6b6b6b]">Overview stays focused on observability; editing workflows are opened via dedicated sections.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { id: 'overview', label: 'Overview' },
-              { id: 'operations', label: 'Operations' },
-              { id: 'profile', label: 'Profile Studio' },
-            ].map((item) => {
-              const isActive = view === item.id;
-
-              return (
-                <Link
-                  key={item.id}
-                  href={item.id === 'overview' ? '/dashboard/provider' : `/dashboard/provider?view=${item.id}`}
-                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
-                    isActive
-                      ? 'border-[#f2dfcf] bg-[#fff7f0] text-ink'
-                      : 'border-[#f2dfcf] bg-white text-[#6b6b6b] hover:text-ink'
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {view === 'overview' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Notification Center</h2>
-        <ul className="mt-4 grid gap-2 text-sm">
-          {providerAlerts.map((alert, index) => (
-            <li
-              key={`${alert.level}-${index}`}
-              className={`rounded-xl border p-3 ${
-                alert.level === 'critical'
-                  ? 'border-red-200 bg-red-50 text-red-700'
-                  : alert.level === 'warning'
-                    ? 'border-amber-200 bg-amber-50 text-amber-700'
-                    : 'border-[#f2dfcf] bg-[#fffdfa] text-[#6b6b6b]'
-              }`}
-            >
-              {alert.message}
-            </li>
-          ))}
-        </ul>
-      </section>
-      ) : null}
-
-      {view === 'overview' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Workload Insights</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Active Queue: {bookingInsights.active}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Pending Confirmation: {bookingInsights.pending}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Confirmed Upcoming: {bookingInsights.confirmed}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Morning Load: {bookingInsights.hourBuckets.Morning}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Afternoon Load: {bookingInsights.hourBuckets.Afternoon}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Evening Load: {bookingInsights.hourBuckets.Evening}</div>
-        </div>
-      </section>
-      ) : null}
+    <DashboardPageLayout
+      title="Provider Dashboard"
+      description="Manage your bookings, performance, and profile"
+      tabs={dashboardTabs}
+      activeTab={view}
+    >
+      <div className="space-y-8">
 
       {view === 'overview' || view === 'operations' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-xl font-semibold text-ink">Booking Command Center</h2>
+      <section className="space-y-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <h2 className="text-section-title">Booking Command Center</h2>
           <select
             value={bookingFilter}
             onChange={(event) =>
@@ -749,7 +751,7 @@ export default function ProviderDashboardClient({
                 event.target.value as 'all' | 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show',
               )
             }
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+            className="input-field w-full sm:w-auto"
           >
             <option value="all">All</option>
             <option value="pending">Pending</option>
@@ -760,326 +762,325 @@ export default function ProviderDashboardClient({
           </select>
         </div>
 
-        <ul className="mt-4 grid gap-2 text-sm">
-          {providerBookings.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-[#6b6b6b]">No bookings in queue.</li>
-          ) : (
-            providerBookings.slice(0, 20).map((booking) => (
-              <li key={booking.id} className="rounded-xl border border-[#f2dfcf] p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold text-ink">
-                    #{booking.id} • {booking.booking_date} • {booking.start_time} - {booking.end_time}
-                  </p>
+        <Card>
+          <div className="space-y-2">
+            {providerBookings.length === 0 ? (
+              <p className="text-body text-neutral-500 text-center py-6">No bookings in queue</p>
+            ) : (
+              <>
+                {providerBookings.slice(0, 20).map((booking) => (
+              <div key={booking.id} className="border-b border-neutral-200/60 pb-4 last:border-b-0 last:pb-0">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+                  <div className="space-y-1">
+                    <p className="font-semibold text-neutral-900">
+                      Booking #{booking.id}
+                    </p>
+                    <p className="text-sm text-neutral-600">
+                      {booking.booking_date} • {booking.start_time} - {booking.end_time}
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {booking.service_type ?? 'Service'} • {booking.booking_mode.replace('_', ' ')}
+                    </p>
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {booking.booking_status === 'pending' ? (
-                      <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-700">
-                        SLA: Action Needed
-                      </span>
-                    ) : null}
-                    <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-3 py-1 text-[11px] capitalize text-ink">
-                      {booking.booking_status.replace('_', ' ')}
-                    </span>
+                    {booking.booking_status === 'pending' && (
+                      <Alert variant="warning" className="!p-2">
+                        Action Needed
+                      </Alert>
+                    )}
+                    <StatusBadge status={booking.booking_status} />
                   </div>
                 </div>
-                <p className="mt-1 text-xs text-[#6b6b6b]">
-                  {booking.service_type ?? 'Service'} • {booking.booking_mode.replace('_', ' ')}
-                </p>
-                <p className="mt-1 text-[11px] text-[#6b6b6b]">{bookingTimelineLabel(booking.booking_status)}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {booking.booking_status === 'pending' ? (
-                    <button
-                      type="button"
+                <p className="text-xs text-neutral-500 mb-4">{bookingTimelineLabel(booking.booking_status)}</p>
+                <div className="flex flex-wrap gap-2">
+                  {booking.booking_status === 'pending' && (
+                    <Button
+                      size="sm"
                       onClick={() => setProviderBookingStatus(booking.id, 'confirmed')}
-                      className="rounded-full border border-[#f2dfcf] px-3 py-1 text-[11px] font-semibold text-ink"
                     >
                       Confirm
-                    </button>
-                  ) : null}
-                  {booking.booking_status === 'confirmed' ? (
+                    </Button>
+                  )}
+                  {booking.booking_status === 'confirmed' && (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => setProviderBookingStatus(booking.id, 'completed')}
-                        className="rounded-full border border-[#f2dfcf] px-3 py-1 text-[11px] font-semibold text-ink"
+                      {booking.requires_completion_feedback && (
+                        <Input
+                          value={completionFeedbackDraft[booking.id] ?? ''}
+                          onChange={(event) =>
+                            setCompletionFeedbackDraft((current) => ({
+                              ...current,
+                              [booking.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Add post-visit feedback before completion"
+                          className="min-w-[240px]"
+                        />
+                      )}
+                      <Button
+                        size="sm"
+                        variant="success"
+                        onClick={() =>
+                          setProviderBookingStatus(
+                            booking.id,
+                            'completed',
+                            completionFeedbackDraft[booking.id],
+                            completionFeedbackDraft[booking.id],
+                          )
+                        }
+                        disabled={booking.requires_completion_feedback && !(completionFeedbackDraft[booking.id] ?? '').trim()}
                       >
                         Complete
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => setProviderBookingStatus(booking.id, 'no_show')}
-                        className="rounded-full border border-[#f2dfcf] px-3 py-1 text-[11px] font-semibold text-ink"
                       >
-                        Mark No-show
-                      </button>
+                        No-show
+                      </Button>
                     </>
-                  ) : null}
-                  {(booking.booking_status === 'pending' || booking.booking_status === 'confirmed') ? (
-                    <button
-                      type="button"
+                  )}
+                  {(booking.booking_status === 'pending' || booking.booking_status === 'confirmed') && (
+                    <Button
+                      size="sm"
+                      variant="danger"
                       onClick={() => setProviderBookingStatus(booking.id, 'cancelled')}
-                      className="rounded-full border border-[#f2dfcf] px-3 py-1 text-[11px] font-semibold text-ink"
                     >
                       Cancel
-                    </button>
-                  ) : null}
+                    </Button>
+                  )}
                 </div>
-              </li>
-            ))
-          )}
-        </ul>
+              </div>
+                ))}
+              </>
+            )}
+          </div>
+        </Card>
       </section>
       ) : null}
 
       {view === 'operations' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Blocked Dates</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <input
-            type="date"
-            value={newBlockedDate.blockedDate}
-            onChange={(event) => setNewBlockedDate((current) => ({ ...current, blockedDate: event.target.value }))}
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            value={newBlockedDate.reason}
-            onChange={(event) => setNewBlockedDate((current) => ({ ...current, reason: event.target.value }))}
-            placeholder="Reason"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <button
-            type="button"
-            onClick={addBlockedDate}
-            disabled={isPending}
-            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-5 py-2.5 text-xs font-semibold text-ink"
-          >
-            Block Date
-          </button>
-        </div>
-
-        <ul className="mt-4 grid gap-2 text-sm">
-          {blockedDates.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-[#6b6b6b]">No blocked dates set.</li>
-          ) : (
-            blockedDates.map((item) => (
-              <li key={item.id} className="rounded-xl border border-[#f2dfcf] p-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-ink">{item.blocked_date}</p>
-                  <p className="text-xs text-[#6b6b6b]">{item.reason ?? 'No reason provided'}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeBlockedDate(item.id)}
-                  className="rounded-full border border-[#f2dfcf] px-3 py-1 text-[11px] font-semibold text-ink"
+      <section className="space-y-6">
+        <h2 className="text-section-title">Blocked Dates</h2>
+        <Card>
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Input
+                type="date"
+                value={newBlockedDate.blockedDate}
+                onChange={(event) => setNewBlockedDate((current) => ({ ...current, blockedDate: event.target.value }))}
+                label="Date"
+              />
+              <Input
+                value={newBlockedDate.reason}
+                onChange={(event) => setNewBlockedDate((current) => ({ ...current, reason: event.target.value }))}
+                placeholder="Reason (optional)"
+                label="Reason"
+              />
+              <div className="flex items-end">
+                <Button
+                  onClick={addBlockedDate}
+                  disabled={isPending}
+                  className="w-full"
                 >
-                  Remove
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
+                  Block Date
+                </Button>
+              </div>
+            </div>
+
+            {blockedDates.length === 0 ? (
+              <p className="text-body text-neutral-500 text-center py-6">No blocked dates set</p>
+            ) : (
+              <div className="space-y-3">
+                {blockedDates.map((item) => (
+                  <div key={item.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg border border-neutral-200/60 bg-neutral-50/50">
+                    <div>
+                      <p className="font-semibold text-neutral-900">{item.blocked_date}</p>
+                      <p className="text-sm text-neutral-600 mt-1">{item.reason ?? 'No reason provided'}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removeBlockedDate(item.id)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       </section>
       ) : null}
 
       {view === 'profile' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 1 – Profile Information</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <input
-            value={profileForm.bio}
-            onChange={(event) => setProfileForm((current) => ({ ...current, bio: event.target.value }))}
-            placeholder="Bio"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm sm:col-span-2"
-          />
-          <input
-            value={profileForm.profile_photo_url}
-            onChange={(event) => setProfileForm((current) => ({ ...current, profile_photo_url: event.target.value }))}
-            placeholder="Profile photo URL"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm sm:col-span-2"
-          />
-          <input
-            type="number"
-            min={0}
-            value={profileForm.years_of_experience}
-            onChange={(event) => setProfileForm((current) => ({ ...current, years_of_experience: event.target.value }))}
-            placeholder="Years of experience"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            value={profileForm.phone_number}
-            onChange={(event) => setProfileForm((current) => ({ ...current, phone_number: event.target.value }))}
-            placeholder="Phone number"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            value={profileForm.email}
-            onChange={(event) => setProfileForm((current) => ({ ...current, email: event.target.value }))}
-            placeholder="Email"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            type="number"
-            min={0}
-            value={profileForm.service_radius_km}
-            onChange={(event) => setProfileForm((current) => ({ ...current, service_radius_km: event.target.value }))}
-            placeholder="Service radius (km)"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Profile Information</h2>
+          <p className="text-muted">Manage your public profile and professional details</p>
         </div>
-        <button
-          type="button"
-          onClick={saveProfile}
-          disabled={isPending}
-          className="mt-4 rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-5 py-2.5 text-xs font-semibold text-ink"
-        >
-          Save Profile
-        </button>
+        
+        <Card>
+          <div className="space-y-4">
+            <Input
+              label="Bio"
+              value={profileForm.bio}
+              onChange={(event) => setProfileForm((current) => ({ ...current, bio: event.target.value }))}
+              placeholder="Write a brief bio about yourself"
+            />
+            
+            <Input
+              label="Profile Photo URL"
+              value={profileForm.profile_photo_url}
+              onChange={(event) => setProfileForm((current) => ({ ...current, profile_photo_url: event.target.value }))}
+              placeholder="https://example.com/photo.jpg"
+            />
+            
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Years of Experience"
+                type="number"
+                min={0}
+                value={profileForm.years_of_experience}
+                onChange={(event) => setProfileForm((current) => ({ ...current, years_of_experience: event.target.value }))}
+                placeholder="0"
+              />
+              
+              <Input
+                label="Phone Number"
+                value={profileForm.phone_number}
+                onChange={(event) => setProfileForm((current) => ({ ...current, phone_number: event.target.value }))}
+                placeholder="+91 XXXXX XXXXX"
+              />
+              
+              <Input
+                label="Email"
+                type="email"
+                value={profileForm.email}
+                onChange={(event) => setProfileForm((current) => ({ ...current, email: event.target.value }))}
+                placeholder="your@email.com"
+              />
+              
+              <Input
+                label="Service Radius (km)"
+                type="number"
+                min={0}
+                value={profileForm.service_radius_km}
+                onChange={(event) => setProfileForm((current) => ({ ...current, service_radius_km: event.target.value }))}
+                placeholder="0"
+              />
+            </div>
+            
+            <Button onClick={saveProfile} disabled={isPending} className="w-full sm:w-auto">
+              Save Profile
+            </Button>
+          </div>
+        </Card>
       </section>
       ) : null}
 
       {view === 'profile' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 2 – Professional/Clinic Details</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 text-sm">
-          <input
-            value={detailsForm.license_number}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, license_number: event.target.value }))}
-            placeholder="License number"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <input
-            value={detailsForm.specialization}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, specialization: event.target.value }))}
-            placeholder="Specialization"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <input
-            value={detailsForm.registration_number}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, registration_number: event.target.value }))}
-            placeholder="Clinic registration"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <input
-            value={detailsForm.city}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, city: event.target.value }))}
-            placeholder="City"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <input
-            value={detailsForm.state}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, state: event.target.value }))}
-            placeholder="State"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <input
-            type="number"
-            min={0}
-            value={detailsForm.number_of_doctors}
-            onChange={(event) => setDetailsForm((current) => ({ ...current, number_of_doctors: event.target.value }))}
-            placeholder="Number of doctors"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5"
-          />
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={detailsForm.teleconsult_enabled}
-              onChange={(event) =>
-                setDetailsForm((current) => ({ ...current, teleconsult_enabled: event.target.checked }))
-              }
-            />
-            Teleconsult enabled
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={detailsForm.hospitalization_available}
-              onChange={(event) =>
-                setDetailsForm((current) => ({ ...current, hospitalization_available: event.target.checked }))
-              }
-            />
-            Hospitalization available
-          </label>
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Professional & Clinic Details</h2>
+          <p className="text-muted">Add credentials, qualifications, and facility information</p>
         </div>
-        <button
-          type="button"
-          onClick={saveDetails}
-          disabled={isPending}
-          className="mt-4 rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-5 py-2.5 text-xs font-semibold text-ink"
-        >
-          Save Details
-        </button>
-      </section>
-      ) : null}
-
-      {view === 'profile' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 3 – Availability</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
-          <select
-            value={newAvailability.day_of_week}
-            onChange={(event) =>
-              setNewAvailability((current) => ({ ...current, day_of_week: Number(event.target.value) }))
-            }
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          >
-            {WEEK_DAYS.map((day) => (
-              <option key={day.day} value={day.day}>
-                {day.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="time"
-            value={newAvailability.start_time}
-            onChange={(event) => setNewAvailability((current) => ({ ...current, start_time: event.target.value }))}
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            type="time"
-            value={newAvailability.end_time}
-            onChange={(event) => setNewAvailability((current) => ({ ...current, end_time: event.target.value }))}
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <label className="flex items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={newAvailability.is_available}
-              onChange={(event) =>
-                setNewAvailability((current) => ({ ...current, is_available: event.target.checked }))
-              }
-            />
-            Available
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={addAvailability}
-          disabled={isPending}
-          className="mt-4 rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-5 py-2.5 text-xs font-semibold text-ink"
-        >
-          Add Availability
-        </button>
-
-        <ul className="mt-4 grid gap-2 text-sm">
-          {dashboard.availability.map((slot) => (
-            <li key={slot.id} className="rounded-xl border border-[#f2dfcf] p-3">
-              <div className="grid gap-2 sm:grid-cols-4">
-                <select
-                  value={availabilityDraft[slot.id]?.day_of_week ?? slot.day_of_week}
+        
+        <Card>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="License Number"
+                value={detailsForm.license_number}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, license_number: event.target.value }))}
+                placeholder="License number"
+              />
+              <Input
+                label="Specialization"
+                value={detailsForm.specialization}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, specialization: event.target.value }))}
+                placeholder="Specialization"
+              />
+              <Input
+                label="Clinic Registration"
+                value={detailsForm.registration_number}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, registration_number: event.target.value }))}
+                placeholder="Registration number"
+              />
+              <Input
+                label="City"
+                value={detailsForm.city}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, city: event.target.value }))}
+                placeholder="City"
+              />
+              <Input
+                label="State"
+                value={detailsForm.state}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, state: event.target.value }))}
+                placeholder="State"
+              />
+              <Input
+                label="Number of Doctors"
+                type="number"
+                min={0}
+                value={detailsForm.number_of_doctors}
+                onChange={(event) => setDetailsForm((current) => ({ ...current, number_of_doctors: event.target.value }))}
+                placeholder="0"
+              />
+            </div>
+            
+            <div className="space-y-3 pt-3 border-t border-neutral-200/60">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={detailsForm.teleconsult_enabled}
                   onChange={(event) =>
-                    setAvailabilityDraft((current) => ({
-                      ...current,
-                      [slot.id]: {
-                        ...(current[slot.id] ?? {
-                          day_of_week: slot.day_of_week,
-                          start_time: slot.start_time,
-                          end_time: slot.end_time,
-                          is_available: slot.is_available,
-                        }),
-                        day_of_week: Number(event.target.value),
-                      },
-                    }))
+                    setDetailsForm((current) => ({ ...current, teleconsult_enabled: event.target.checked }))
                   }
-                  className="rounded-xl border border-[#f2dfcf] px-2 py-2"
+                  className="w-4 h-4 rounded border-neutral-300"
+                />
+                <span className="text-body">Teleconsult enabled</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={detailsForm.hospitalization_available}
+                  onChange={(event) =>
+                    setDetailsForm((current) => ({ ...current, hospitalization_available: event.target.checked }))
+                  }
+                  className="w-4 h-4 rounded border-neutral-300"
+                />
+                <span className="text-body">Hospitalization available</span>
+              </label>
+            </div>
+            
+            <Button onClick={saveDetails} disabled={isPending} className="w-full sm:w-auto mt-4">
+              Save Details
+            </Button>
+          </div>
+        </Card>
+      </section>
+      ) : null}
+
+      {view === 'profile' ? (
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Availability</h2>
+          <p className="text-muted">Set your working hours and days</p>
+        </div>
+        
+        <Card>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-4">
+              <div>
+                <label className="text-sm font-medium text-neutral-700 block mb-1">Day</label>
+                <select
+                  value={newAvailability.day_of_week}
+                  onChange={(event) =>
+                    setNewAvailability((current) => ({ ...current, day_of_week: Number(event.target.value) }))
+                  }
+                  className="w-full input-field"
                 >
                   {WEEK_DAYS.map((day) => (
                     <option key={day.day} value={day.day}>
@@ -1087,300 +1088,466 @@ export default function ProviderDashboardClient({
                     </option>
                   ))}
                 </select>
-                <input
-                  type="time"
-                  value={availabilityDraft[slot.id]?.start_time ?? slot.start_time}
-                  onChange={(event) =>
-                    setAvailabilityDraft((current) => ({
-                      ...current,
-                      [slot.id]: {
-                        ...(current[slot.id] ?? {
-                          day_of_week: slot.day_of_week,
-                          start_time: slot.start_time,
-                          end_time: slot.end_time,
-                          is_available: slot.is_available,
-                        }),
-                        start_time: event.target.value,
-                      },
-                    }))
-                  }
-                  className="rounded-xl border border-[#f2dfcf] px-2 py-2"
-                />
-                <input
-                  type="time"
-                  value={availabilityDraft[slot.id]?.end_time ?? slot.end_time}
-                  onChange={(event) =>
-                    setAvailabilityDraft((current) => ({
-                      ...current,
-                      [slot.id]: {
-                        ...(current[slot.id] ?? {
-                          day_of_week: slot.day_of_week,
-                          start_time: slot.start_time,
-                          end_time: slot.end_time,
-                          is_available: slot.is_available,
-                        }),
-                        end_time: event.target.value,
-                      },
-                    }))
-                  }
-                  className="rounded-xl border border-[#f2dfcf] px-2 py-2"
-                />
-                <label className="flex items-center gap-2">
+              </div>
+              <Input
+                label="Start Time"
+                type="time"
+                value={newAvailability.start_time}
+                onChange={(event) => setNewAvailability((current) => ({ ...current, start_time: event.target.value }))}
+              />
+              <Input
+                label="End Time"
+                type="time"
+                value={newAvailability.end_time}
+                onChange={(event) => setNewAvailability((current) => ({ ...current, end_time: event.target.value }))}
+              />
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={availabilityDraft[slot.id]?.is_available ?? slot.is_available}
+                    checked={newAvailability.is_available}
                     onChange={(event) =>
-                      setAvailabilityDraft((current) => ({
-                        ...current,
-                        [slot.id]: {
-                          ...(current[slot.id] ?? {
-                            day_of_week: slot.day_of_week,
-                            start_time: slot.start_time,
-                            end_time: slot.end_time,
-                            is_available: slot.is_available,
-                          }),
-                          is_available: event.target.checked,
-                        },
-                      }))
+                      setNewAvailability((current) => ({ ...current, is_available: event.target.checked }))
                     }
+                    className="w-4 h-4 rounded border-neutral-300"
                   />
-                  Available
+                  <span className="text-sm font-medium text-neutral-700">Available</span>
                 </label>
               </div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => saveAvailabilitySlot(slot.id)}
-                  className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                >
-                  Save Slot
-                </button>
-                <button
-                  type="button"
-                  onClick={() => deleteAvailability(slot.id)}
-                  className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                >
-                  Delete Slot
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+            </div>
+            
+            <Button onClick={addAvailability} disabled={isPending} className="w-full sm:w-auto">
+              Add Availability
+            </Button>
+          </div>
+        </Card>
+
+        {dashboard.availability.length > 0 && (
+          <Card>
+            <div className="space-y-3">
+              {dashboard.availability.map((slot) => (
+                <div key={slot.id} className="border-b border-neutral-200/60 pb-4 last:border-b-0 last:pb-0">
+                  <div className="grid gap-2 sm:grid-cols-4 mb-3">
+                    <div>
+                      <label className="text-xs font-medium text-neutral-600 block mb-1">Day</label>
+                      <select
+                        value={availabilityDraft[slot.id]?.day_of_week ?? slot.day_of_week}
+                        onChange={(event) =>
+                          setAvailabilityDraft((current) => ({
+                            ...current,
+                            [slot.id]: {
+                              ...(current[slot.id] ?? {
+                                day_of_week: slot.day_of_week,
+                                start_time: slot.start_time,
+                                end_time: slot.end_time,
+                                is_available: slot.is_available,
+                              }),
+                              day_of_week: Number(event.target.value),
+                            },
+                          }))
+                        }
+                        className="input-field w-full text-sm"
+                      >
+                        {WEEK_DAYS.map((day) => (
+                          <option key={day.day} value={day.day}>
+                            {day.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <Input
+                      type="time"
+                      value={availabilityDraft[slot.id]?.start_time ?? slot.start_time}
+                      onChange={(event) =>
+                        setAvailabilityDraft((current) => ({
+                          ...current,
+                          [slot.id]: {
+                            ...(current[slot.id] ?? {
+                              day_of_week: slot.day_of_week,
+                              start_time: slot.start_time,
+                              end_time: slot.end_time,
+                              is_available: slot.is_available,
+                            }),
+                            start_time: event.target.value,
+                          },
+                        }))
+                      }
+                      label="Start"
+                    />
+                    <Input
+                      type="time"
+                      value={availabilityDraft[slot.id]?.end_time ?? slot.end_time}
+                      onChange={(event) =>
+                        setAvailabilityDraft((current) => ({
+                          ...current,
+                          [slot.id]: {
+                            ...(current[slot.id] ?? {
+                              day_of_week: slot.day_of_week,
+                              start_time: slot.start_time,
+                              end_time: slot.end_time,
+                              is_available: slot.is_available,
+                            }),
+                            end_time: event.target.value,
+                          },
+                        }))
+                      }
+                      label="End"
+                    />
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={availabilityDraft[slot.id]?.is_available ?? slot.is_available}
+                        onChange={(event) =>
+                          setAvailabilityDraft((current) => ({
+                            ...current,
+                            [slot.id]: {
+                              ...(current[slot.id] ?? {
+                                day_of_week: slot.day_of_week,
+                                start_time: slot.start_time,
+                                end_time: slot.end_time,
+                                is_available: slot.is_available,
+                              }),
+                              is_available: event.target.checked,
+                            },
+                          }))
+                        }
+                        className="w-4 h-4 rounded border-neutral-300"
+                      />
+                      <span className="text-sm font-medium text-neutral-700">Available</span>
+                    </label>
+                  </div>
+                  <div className="flex gap-2 pt-3 border-t border-neutral-200/60">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => saveAvailabilitySlot(slot.id)}
+                    >
+                      Save Slot
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => deleteAvailability(slot.id)}
+                    >
+                      Delete Slot
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
       </section>
       ) : null}
 
       {view === 'profile' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 4 – Documents</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <input
-            value={newDocument.document_type}
-            onChange={(event) => setNewDocument((current) => ({ ...current, document_type: event.target.value }))}
-            placeholder="Document type"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
-          <input
-            value={newDocument.document_url}
-            onChange={(event) => setNewDocument((current) => ({ ...current, document_url: event.target.value }))}
-            placeholder="Document URL"
-            className="rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-          />
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Documents</h2>
+          <p className="text-muted">Upload and manage your professional documents</p>
         </div>
-        <button
-          type="button"
-          onClick={uploadDocument}
-          disabled={isPending}
-          className="mt-4 rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-5 py-2.5 text-xs font-semibold text-ink"
-        >
-          Upload Document
-        </button>
+        
+        <Card>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Input
+                label="Document Type"
+                value={newDocument.document_type}
+                onChange={(event) => setNewDocument((current) => ({ ...current, document_type: event.target.value }))}
+                placeholder="License, Insurance, Certification, etc."
+              />
+              <Input
+                label="Document URL"
+                value={newDocument.document_url}
+                onChange={(event) => setNewDocument((current) => ({ ...current, document_url: event.target.value }))}
+                placeholder="https://example.com/document.pdf"
+              />
+            </div>
+            
+            <Button onClick={uploadDocument} disabled={isPending} className="w-full sm:w-auto">
+              Upload Document
+            </Button>
+          </div>
+        </Card>
 
-        <ul className="mt-4 grid gap-2">
-          {dashboard.documents.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-sm text-[#6b6b6b]">No documents uploaded.</li>
-          ) : (
-            dashboard.documents.map((doc) => (
-              <li key={doc.id} className="rounded-xl border border-[#f2dfcf] p-3 text-sm">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    value={documentDraft[doc.id]?.document_type ?? doc.document_type ?? ''}
-                    onChange={(event) =>
-                      setDocumentDraft((current) => ({
-                        ...current,
-                        [doc.id]: {
-                          document_type: event.target.value,
-                          document_url: current[doc.id]?.document_url ?? doc.document_url ?? '',
-                        },
-                      }))
-                    }
-                    className="rounded-xl border border-[#f2dfcf] px-3 py-2"
-                  />
-                  <input
-                    value={documentDraft[doc.id]?.document_url ?? doc.document_url ?? ''}
-                    onChange={(event) =>
-                      setDocumentDraft((current) => ({
-                        ...current,
-                        [doc.id]: {
-                          document_type: current[doc.id]?.document_type ?? doc.document_type ?? '',
-                          document_url: event.target.value,
-                        },
-                      }))
-                    }
-                    className="rounded-xl border border-[#f2dfcf] px-3 py-2"
-                  />
-                </div>
-                <p className="mt-1 text-xs text-[#6b6b6b]">Verification: {doc.verification_status}</p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => saveDocument(doc.id)}
-                    className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                  >
-                    Save Document
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeDocument(doc.id)}
-                    className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                  >
-                    Delete Document
-                  </button>
-                </div>
-              </li>
-            ))
-          )}
-        </ul>
+        {dashboard.documents.length > 0 && (
+          <Card>
+            {dashboard.documents.length === 0 ? (
+              <p className="text-body text-neutral-500 text-center py-6">No documents uploaded</p>
+            ) : (
+              <div className="space-y-3">
+                {dashboard.documents.map((doc) => (
+                  <div key={doc.id} className="border-b border-neutral-200/60 pb-4 last:border-b-0 last:pb-0">
+                    <div className="grid gap-3 sm:grid-cols-2 mb-3">
+                      <Input
+                        label="Type"
+                        value={documentDraft[doc.id]?.document_type ?? doc.document_type ?? ''}
+                        onChange={(event) =>
+                          setDocumentDraft((current) => ({
+                            ...current,
+                            [doc.id]: {
+                              document_type: event.target.value,
+                              document_url: current[doc.id]?.document_url ?? doc.document_url ?? '',
+                            },
+                          }))
+                        }
+                      />
+                      <Input
+                        label="URL"
+                        value={documentDraft[doc.id]?.document_url ?? doc.document_url ?? ''}
+                        onChange={(event) =>
+                          setDocumentDraft((current) => ({
+                            ...current,
+                            [doc.id]: {
+                              document_type: current[doc.id]?.document_type ?? doc.document_type ?? '',
+                              document_url: event.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pt-3 border-t border-neutral-200/60">
+                      <Badge
+                        variant={doc.verification_status === 'approved' ? 'success' : doc.verification_status === 'rejected' ? 'error' : 'warning'}
+                      >
+                        {`Verification: ${doc.verification_status}`}
+                      </Badge>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => saveDocument(doc.id)}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => removeDocument(doc.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
       </section>
       ) : null}
 
       {view === 'operations' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 5 – Reviews</h2>
-        <div className="mt-3 flex items-center gap-2">
-          <label className="text-xs text-[#6b6b6b]">Filter</label>
-          <select
-            value={reviewFilter}
-            onChange={(event) => setReviewFilter(event.target.value as 'all' | '1' | '2' | '3' | '4' | '5')}
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-          >
-            <option value="all">All ratings</option>
-            <option value="5">5 stars</option>
-            <option value="4">4 stars</option>
-            <option value="3">3 stars</option>
-            <option value="2">2 stars</option>
-            <option value="1">1 star</option>
-          </select>
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Reviews & Feedback</h2>
+          <p className="text-muted">Manage customer reviews and build your reputation</p>
         </div>
+        
+        <Card>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-neutral-700">Filter by Rating</label>
+              <select
+                value={reviewFilter}
+                onChange={(event) => setReviewFilter(event.target.value as 'all' | '1' | '2' | '3' | '4' | '5')}
+                className="input-field"
+              >
+                <option value="all">All ratings</option>
+                <option value="5">5 stars</option>
+                <option value="4">4 stars</option>
+                <option value="3">3 stars</option>
+                <option value="2">2 stars</option>
+                <option value="1">1 star</option>
+              </select>
+            </div>
 
-        <ul className="mt-4 grid gap-2">
-          {reviewsPage.reviews.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-sm text-[#6b6b6b]">No reviews found.</li>
-          ) : (
-            reviewsPage.reviews.map((review) => (
-              <li key={review.id} className="rounded-xl border border-[#f2dfcf] p-3 text-sm">
-                <p className="font-semibold text-ink">Rating: {review.rating}/5</p>
-                <p className="mt-1 text-[#6b6b6b]">{review.review_text ?? 'No written feedback.'}</p>
-                <p className="mt-1 text-xs text-[#6b6b6b]">{new Date(review.created_at).toLocaleString()}</p>
-                <p className="mt-1 text-xs text-[#6b6b6b]">Current response: {review.provider_response ?? 'None'}</p>
-                <input
-                  value={reviewResponses[review.id] ?? ''}
-                  onChange={(event) =>
-                    setReviewResponses((current) => ({
-                      ...current,
-                      [review.id]: event.target.value,
-                    }))
-                  }
-                  placeholder="Write response"
-                  className="mt-3 w-full rounded-xl border border-[#f2dfcf] px-4 py-2.5 text-sm"
-                />
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => respondToReview(review.id)}
-                    className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                  >
-                    Submit Response
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadResponseHistory(review.id)}
-                    className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink"
-                  >
-                    View History
-                  </button>
-                </div>
-                {responseHistory[review.id]?.length ? (
-                  <ul className="mt-2 grid gap-1 text-xs text-[#6b6b6b]">
-                    {responseHistory[review.id].map((entry) => (
-                      <li key={entry.id}>
-                        {new Date(entry.created_at).toLocaleString()} • {entry.previous_response ?? 'No previous response'} → {entry.new_response}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
-            ))
-          )}
-        </ul>
+            {reviewsPage.reviews.length === 0 ? (
+              <p className="text-body text-neutral-500 text-center py-6">No reviews found</p>
+            ) : (
+              <div className="space-y-4">
+                {reviewsPage.reviews.map((review) => (
+                  <div key={review.id} className="border-b border-neutral-200/60 pb-4 last:border-b-0 last:pb-0">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="space-y-1">
+                        <Badge variant={review.rating >= 4 ? 'success' : review.rating >= 3 ? 'warning' : 'error'}>
+                          {`${review.rating}/5 stars`}
+                        </Badge>
+                        <p className="text-sm text-neutral-600">{new Date(review.created_at).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    
+                    <p className="text-body mb-3">{review.review_text ?? 'No written feedback'}</p>
+                    
+                    <div className="space-y-3 p-3 bg-neutral-50/50 rounded-lg mb-3">
+                      <p className="text-sm text-neutral-600">
+                        <span className="font-medium">Current Response:</span> {review.provider_response ?? 'No response yet'}
+                      </p>
+                      <Input
+                        value={reviewResponses[review.id] ?? ''}
+                        onChange={(event) =>
+                          setReviewResponses((current) => ({
+                            ...current,
+                            [review.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="Write your response..."
+                      />
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => respondToReview(review.id)}
+                      >
+                        Submit Response
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => loadResponseHistory(review.id)}
+                      >
+                        View History
+                      </Button>
+                    </div>
+                    
+                    {responseHistory[review.id]?.length ? (
+                      <div className="mt-3 space-y-2 text-xs text-neutral-500">
+                        {responseHistory[review.id].map((entry) => (
+                          <div key={entry.id} className="p-2 bg-neutral-50/50 rounded">
+                            {new Date(entry.created_at).toLocaleString()} • Previous: &quot;{entry.previous_response ?? 'None'}&quot; → New: &quot;{entry.new_response}&quot;
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
 
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
-            disabled={isPending || reviewsPage.page <= 1}
-            onClick={() => fetchReviews(reviewsPage.page - 1, reviewFilter)}
-            className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink disabled:opacity-60"
-          >
-            Previous
-          </button>
-          <span className="text-xs text-[#6b6b6b]">
-            Page {reviewsPage.page} • Total {reviewsPage.total}
-          </span>
-          <button
-            type="button"
-            disabled={isPending || !reviewsPage.hasMore}
-            onClick={() => fetchReviews(reviewsPage.page + 1, reviewFilter)}
-            className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink disabled:opacity-60"
-          >
-            Next
-          </button>
-        </div>
+            <div className="flex items-center justify-between pt-4 border-t border-neutral-200/60">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isPending || reviewsPage.page <= 1}
+                onClick={() => fetchReviews(reviewsPage.page - 1, reviewFilter)}
+              >
+                ← Previous
+              </Button>
+              <span className="text-sm text-neutral-600">
+                Page {reviewsPage.page} of {Math.ceil(reviewsPage.total / reviewsPage.pageSize)} • {reviewsPage.total} total
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isPending || !reviewsPage.hasMore}
+                onClick={() => fetchReviews(reviewsPage.page + 1, reviewFilter)}
+              >
+                Next →
+              </Button>
+            </div>
+          </div>
+        </Card>
       </section>
       ) : null}
 
       {view === 'overview' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Section 6 – Performance Overview</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm">
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Average Rating: {performanceSummary?.avgRating ?? 0}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Total Bookings: {performanceSummary?.totalBookings ?? 0}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Cancellation Rate: {performanceSummary?.cancellationRate ?? 0}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">No-Show Count: {performanceSummary?.noShowCount ?? 0}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Performance Score: {performanceSummary?.performanceScore ?? 0}</div>
-          <div className="rounded-xl border border-[#f2dfcf] p-3">Ranking Score: {performanceSummary?.rankingScore ?? 0}</div>
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Performance Overview</h2>
+          <p className="text-muted">Track your provider metrics and account health</p>
         </div>
-        <p className="mt-3 text-xs text-[#6b6b6b]">Account status: {performanceSummary?.accountStatus ?? 'unknown'}</p>
+        
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard
+            label="Average Rating"
+            value={`${performanceSummary?.avgRating ?? 0}/5`}
+            icon="star"
+          />
+          <StatCard
+            label="Total Bookings"
+            value={performanceSummary?.totalBookings ?? 0}
+            icon="calendar"
+          />
+          <StatCard
+            label="Cancellation Rate"
+            value={`${performanceSummary?.cancellationRate ?? 0}%`}
+            icon="x-circle"
+          />
+          <StatCard
+            label="No-Show Count"
+            value={performanceSummary?.noShowCount ?? 0}
+            icon="alert-circle"
+          />
+          <StatCard
+            label="Performance Score"
+            value={`${performanceSummary?.performanceScore ?? 0}%`}
+            icon="trending-up"
+          />
+          <StatCard
+            label="Ranking Score"
+            value={`${performanceSummary?.rankingScore ?? 0}`}
+            icon="award"
+          />
+        </div>
+
+        <Card>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-neutral-700">Account Status:</span>
+              <Badge
+                variant={
+                  performanceSummary?.accountStatus === 'active'
+                    ? 'success'
+                    : performanceSummary?.accountStatus === 'suspended'
+                    ? 'error'
+                    : 'warning'
+                }
+              >
+                {performanceSummary?.accountStatus ?? 'unknown'}
+              </Badge>
+            </div>
+          </div>
+        </Card>
       </section>
       ) : null}
 
       {view === 'profile' ? (
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Pricing (View-only for Providers)</h2>
-        <ul className="mt-4 grid gap-2 text-sm">
+      <section className="space-y-6">
+        <div className="space-y-3">
+          <h2 className="text-section-title">Pricing Catalog</h2>
+          <p className="text-muted">Your service pricing (managed by administrators)</p>
+        </div>
+        
+        <Card>
           {dashboard.services.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-[#6b6b6b]">No pricing configured by admin.</li>
+            <div className="text-center py-8">
+              <p className="text-body text-neutral-500">No pricing configured yet</p>
+              <p className="text-muted text-sm mt-1">Administrators will set up your service pricing</p>
+            </div>
           ) : (
-            dashboard.services.map((service) => (
-              <li key={service.id} className="rounded-xl border border-[#f2dfcf] p-3">
-                <p className="font-semibold text-ink">{service.service_type}</p>
-                <p className="text-[#6b6b6b]">
-                  Base: ₹{service.base_price} • Surge: {service.surge_price ?? 'N/A'} • Commission: {service.commission_percentage ?? 'N/A'}%
-                </p>
-              </li>
-            ))
+            <div className="space-y-3">
+              {dashboard.services.map((service) => (
+                <div key={service.id} className="border-b border-neutral-200/60 pb-3 last:border-b-0 last:pb-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-neutral-900">{service.service_type}</p>
+                      <div className="flex gap-4 mt-2 text-sm text-neutral-600">
+                        <span>Base: <span className="font-medium text-neutral-900">₹{service.base_price}</span></span>
+                        <span>Surge: <span className="font-medium text-neutral-900">{service.surge_price ?? 'N/A'}</span></span>
+                        <span>Commission: <span className="font-medium text-neutral-900">{service.commission_percentage ?? 'N/A'}%</span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-        </ul>
+        </Card>
       </section>
       ) : null}
-    </div>
+      </div>
+    </DashboardPageLayout>
   );
 }

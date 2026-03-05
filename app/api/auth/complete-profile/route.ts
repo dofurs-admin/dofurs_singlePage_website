@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server-client';
 import { ownerProfileSchema } from '@/lib/flows/validation';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   const supabase = await getSupabaseServerClient();
@@ -35,7 +36,8 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (existingEmailProfileError) {
-      return NextResponse.json({ error: existingEmailProfileError.message }, { status: 500 });
+      const mapped = toFriendlyApiError(existingEmailProfileError, 'Unable to verify email');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
     }
 
     if (existingEmailProfile) {
@@ -51,7 +53,8 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existingPhoneProfileError) {
-    return NextResponse.json({ error: existingPhoneProfileError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(existingPhoneProfileError, 'Unable to verify phone number');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   if (existingPhoneProfile) {
@@ -71,7 +74,8 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existingProfileRoleError) {
-    return NextResponse.json({ error: existingProfileRoleError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(existingProfileRoleError, 'Unable to complete profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const resolvedRoleId = existingProfileRole?.role_id ?? userRole.id;
@@ -105,7 +109,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'A duplicate profile value exists. Please verify email and phone.' }, { status: 409 });
     }
 
-    return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(upsertError, 'Unable to complete profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const { error: ownerProfileUpsertError } = await supabase.from('profiles').upsert(
@@ -119,7 +124,8 @@ export async function POST(request: Request) {
   );
 
   if (ownerProfileUpsertError) {
-    return NextResponse.json({ error: ownerProfileUpsertError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(ownerProfileUpsertError, 'Unable to complete profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   return NextResponse.json({ success: true });

@@ -28,6 +28,13 @@ const supabase = createClient(
 
 /**
  * Calculate dynamic package price based on provider services and discount
+ * 
+ * @deprecated This function is deprecated. Use calculateBookingPrice() from
+ * lib/bookings/engines/pricingEngine.ts or the service-catalog wrapper instead.
+ * This function will be removed in a future version.
+ * 
+ * Canonical pricing: lib/bookings/engines/pricingEngine.ts
+ * Convenience wrapper: lib/service-catalog/engines/pricing-engine.ts
  */
 export async function calculatePackagePrice(
   packageId: string,

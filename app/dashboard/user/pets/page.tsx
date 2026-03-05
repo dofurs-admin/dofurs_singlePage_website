@@ -1,10 +1,9 @@
-import UserPetProfilesClient from '@/components/dashboard/UserPetProfilesClient';
 import { requireAuthenticatedUser } from '@/lib/auth/session';
+import { redirect } from 'next/navigation';
 
 export default async function UserPetProfilesPage() {
-  const { supabase, user } = await requireAuthenticatedUser();
-
-  const { data: pets } = await supabase.from('pets').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-
-  return <UserPetProfilesClient initialPets={pets ?? []} />;
+  await requireAuthenticatedUser();
+  
+  // Pet management is now integrated in the main dashboard
+  redirect('/dashboard/user');
 }

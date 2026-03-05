@@ -4,6 +4,7 @@ import { getRateLimitKey, isRateLimited } from '@/lib/api/rate-limit';
 import { logOwnerProfileAudit } from '@/lib/owner-profile/audit';
 import { getOwnerProfileAggregate, updateProfile } from '@/lib/owner-profile/service';
 import { basicProfileUpdateSchema, householdProfileUpdateSchema } from '@/lib/owner-profile/validation';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 const RATE_LIMIT = {
   windowMs: 60_000,
@@ -30,8 +31,8 @@ export async function GET() {
     const profile = await getOwnerProfileAggregate(supabase, user.id);
     return NextResponse.json({ profile });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to load owner profile';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to load owner profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }
 
@@ -83,7 +84,7 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ success: true, profile });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to update owner profile';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to update owner profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

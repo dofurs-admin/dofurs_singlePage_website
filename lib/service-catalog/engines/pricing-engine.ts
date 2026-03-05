@@ -1,5 +1,6 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
-import { calculateBookingPriceWithSupabase, type PriceBreakdown } from '@/lib/bookings/engines/pricingEngine';
+import { calculateBookingPriceWithSupabase } from '@/lib/bookings/engines/pricingEngine';
+import type { PricingBreakdown } from '@/lib/bookings/types';
 
 export type BookingPriceParameters = {
   bookingType: 'service' | 'package';
@@ -10,7 +11,7 @@ export type BookingPriceParameters = {
   addOns?: Array<{ id: string; quantity: number }>;
 };
 
-export async function calculateBookingPrice(params: BookingPriceParameters): Promise<PriceBreakdown> {
+export async function calculateBookingPrice(params: BookingPriceParameters): Promise<PricingBreakdown> {
   const supabase = getSupabaseAdminClient();
 
   return calculateBookingPriceWithSupabase(supabase, {

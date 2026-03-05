@@ -13,7 +13,14 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from 'zod';
 import type { Service } from "@/lib/service-catalog/types";
+import { toFriendlyApiError } from '@/lib/api/errors';
+
+const byCategoryQuerySchema = z.object({
+  categoryId: z.string().uuid(),
+  providerId: z.union([z.string().min(1), z.number().int().positive()]),
+});
 
 export async function GET(
   request: NextRequest,
@@ -24,9 +31,14 @@ export async function GET(
     const searchParams = request.nextUrl.searchParams;
     const providerId = searchParams.get("providerId");
 
-    if (!providerId) {
+    const parsed = byCategoryQuerySchema.safeParse({
+      categoryId,
+      providerId,
+    });
+
+    if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: "providerId query parameter is required" },
+        { success: false, error: 'Invalid request parameters', details: parsed.error.flatten() },
         { status: 400 }
       );
     }
@@ -39,15 +51,16 @@ export async function GET(
     const { data, error } = await supabase
       .from("provider_services")
       .select("*")
-      .eq("category_id", categoryId)
-      .eq("provider_id", providerId)
+      .eq("category_id", parsed.data.categoryId)
+      .eq("provider_id", parsed.data.providerId)
       .eq("is_active", true)
       .order("display_order", { ascending: true });
 
     if (error) {
+      const mapped = toFriendlyApiError(error, 'Failed to load services by category');
       return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 }
+        { success: false, error: mapped.message },
+        { status: mapped.status }
       );
     }
 
@@ -56,12 +69,13 @@ export async function GET(
       data: data as Service[],
     });
   } catch (error) {
+    const mapped = toFriendlyApiError(error, 'Failed to load services by category');
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: mapped.message,
       },
-      { status: 500 }
+      { status: mapped.status }
     );
   }
 }

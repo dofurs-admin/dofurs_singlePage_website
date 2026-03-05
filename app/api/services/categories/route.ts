@@ -13,12 +13,29 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from 'zod';
 import type { ServiceCategory } from "@/lib/service-catalog/types";
+import { toFriendlyApiError } from '@/lib/api/errors';
+
+const categoriesQuerySchema = z.object({
+  featured: z.enum(['true', 'false']).optional(),
+});
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const featured = searchParams.get("featured") === "true";
+    const parsed = categoriesQuerySchema.safeParse({
+      featured: searchParams.get('featured') ?? undefined,
+    });
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid request parameters', details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const featured = parsed.data.featured === 'true';
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,9 +55,10 @@ export async function GET(request: NextRequest) {
     const { data, error } = await query;
 
     if (error) {
+      const mapped = toFriendlyApiError(error, 'Failed to load service categories');
       return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 }
+        { success: false, error: mapped.message },
+        { status: mapped.status }
       );
     }
 
@@ -49,12 +67,13 @@ export async function GET(request: NextRequest) {
       data: data as ServiceCategory[],
     });
   } catch (error) {
+    const mapped = toFriendlyApiError(error, 'Failed to load service categories');
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: mapped.message,
       },
-      { status: 500 }
+      { status: mapped.status }
     );
   }
 }

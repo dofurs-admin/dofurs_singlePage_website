@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
+import dynamic from 'next/dynamic';
 import { useToast } from '@/components/ui/ToastProvider';
 import AsyncState from '@/components/ui/AsyncState';
 import LoadingSkeleton from '@/components/ui/LoadingSkeleton';
 import type { ServiceCategory, ServicePackage } from '@/lib/service-catalog/types';
+import type { PricingBreakdown } from '@/lib/bookings/types';
 import type { FlowState } from '@/lib/flows/contracts';
 import { apiRequest } from '@/lib/api/client';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
@@ -13,6 +15,8 @@ import PremiumBookingConfirmation from './PremiumBookingConfirmation';
 import FormField from './FormField';
 import { useOptimisticSelection } from '@/lib/hooks/useOptimisticSelection';
 import { bookingCreateSchema } from '@/lib/flows/validation';
+
+const LocationPinMap = dynamic(() => import('./LocationPinMap'), { ssr: false });
 
 type Provider = { id: number; name: string; provider_type?: string | null; type?: string | null };
 type Service = {
@@ -60,17 +64,27 @@ type ServiceAddon = {
 
 type BookingType = 'service' | 'package';
 
-type PriceCalculation = {
-  basePrice: number;
-  addOnPrice: number;
-  discountAmount: number;
-  finalPrice: number;
-  breakdown: string[];
-};
-
 type BookingCreateResponse = {
   success: boolean;
   booking: { id: number };
+};
+
+type SavedAddress = {
+  id: string;
+  label: 'Home' | 'Office' | 'Other' | null;
+  address_line_1: string;
+  address_line_2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  is_default: boolean;
+};
+
+type SelectableAddress = SavedAddress & {
+  phone?: string;
 };
 
 type BookingCreatePayload = {
@@ -117,8 +131,23 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   const [locationAddress, setLocationAddress] = useState('');
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [localAddresses, setLocalAddresses] = useState<SelectableAddress[]>([]);
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState<string | null>(null);
+  const [showAddAddressModal, setShowAddAddressModal] = useState(false);
+  const [newAddress, setNewAddress] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newLatitude, setNewLatitude] = useState('');
+  const [newLongitude, setNewLongitude] = useState('');
+  const [currentLatitude, setCurrentLatitude] = useState('');
+  const [currentLongitude, setCurrentLongitude] = useState('');
+  const [locationSource, setLocationSource] = useState<'none' | 'detected' | 'current' | 'pinned'>('none');
+  const [deletingAddressId, setDeletingAddressId] = useState<string | null>(null);
+  const [confirmDeleteAddressId, setConfirmDeleteAddressId] = useState<string | null>(null);
+  const [isDetectingAddress, setIsDetectingAddress] = useState(false);
+  const [isDetectingCurrentLocation, setIsDetectingCurrentLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [providerNotes, setProviderNotes] = useState('');
-  const [amount, setAmount] = useState(0);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [discounts, setDiscounts] = useState<CatalogDiscount[]>([]);
   const [discountCode, setDiscountCode] = useState('');
@@ -136,7 +165,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [packages, setPackages] = useState<ServicePackage[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
-  const [priceCalculation, setPriceCalculation] = useState<PriceCalculation | null>(null);
+  const [priceCalculation, setPriceCalculation] = useState<PricingBreakdown | null>(null);
   const [isCalculatingPrice, setIsCalculatingPrice] = useState(false);
   const [serviceAddOns, setServiceAddOns] = useState<ServiceAddon[]>([]);
   const [selectedAddOns, setSelectedAddOns] = useState<Record<string, number>>({});
@@ -169,6 +198,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           providers: Provider[];
           services: Service[];
           pets: Pet[];
+          addresses?: SavedAddress[];
           discounts?: CatalogDiscount[];
           canBookForUsers?: boolean;
           bookableUsers?: BookableUser[];
@@ -185,6 +215,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         setProviders(payload.providers);
         setServices(payload.services);
         setPets(payload.pets);
+        setSavedAddresses(payload.addresses ?? []);
         setDiscounts(payload.discounts ?? []);
 
         const preferredProvider = Number(globalThis.localStorage?.getItem('booking.preferredProviderId') ?? 0);
@@ -205,6 +236,33 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         }
 
         setPetId(payload.pets[0]?.id ?? null);
+
+        const defaultAddress = (payload.addresses ?? []).find((item) => item.is_default) ?? (payload.addresses ?? [])[0];
+        if (defaultAddress) {
+          const formattedAddress = [
+            defaultAddress.address_line_1,
+            defaultAddress.address_line_2,
+            defaultAddress.city,
+            defaultAddress.state,
+            defaultAddress.pincode,
+            defaultAddress.country,
+          ]
+            .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            .join(', ');
+
+          setLocationAddress(formattedAddress);
+          setSelectedSavedAddressId(defaultAddress.id);
+
+          if (defaultAddress.latitude !== null && defaultAddress.longitude !== null) {
+            setLatitude(String(defaultAddress.latitude));
+            setLongitude(String(defaultAddress.longitude));
+          } else {
+            setLatitude('');
+            setLongitude('');
+          }
+        } else {
+          setSelectedSavedAddressId(null);
+        }
       } catch {
         if (isMounted) {
           setApiError('Sign in to access booking flow.');
@@ -270,6 +328,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     [bookableUsers, selectedBookingUserId],
   );
 
+  const allAddresses = useMemo<SelectableAddress[]>(() => [...localAddresses, ...savedAddresses], [localAddresses, savedAddresses]);
+  const requiresBookingUserSelection = showBookForUsers && !selectedBookingUserId;
+
   const recommendationSlots = useMemo(() => {
     if (slots.length === 0) {
       return [] as Array<{ key: string; label: string; reason: string; slot: Slot }>;
@@ -322,10 +383,8 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   }, [providerServices]);
 
   useEffect(() => {
-    const selected = services.find((service) => service.id === serviceId);
-    setAmount(selected?.base_price ?? 0);
     setDiscountPreview(null);
-  }, [serviceId, services]);
+  }, [serviceId]);
 
   useEffect(() => {
     if (!serviceId || bookingType !== 'service') {
@@ -362,9 +421,10 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
 
   const discountSuggestions = useMemo(() => {
     const selectedService = services.find((service) => service.id === serviceId);
+    const baseAmount = priceCalculation?.base_total ?? 0;
 
     return discounts.filter((discount) => {
-      if (discount.min_booking_amount !== null && amount < discount.min_booking_amount) {
+      if (discount.min_booking_amount !== null && baseAmount < discount.min_booking_amount) {
         return false;
       }
 
@@ -378,19 +438,11 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
 
       return discount.applies_to_service_type.trim().toLowerCase() === selectedService.service_type.trim().toLowerCase();
     });
-  }, [discounts, serviceId, services, amount]);
+  }, [discounts, serviceId, services, priceCalculation?.base_total]);
 
   const rankedDiscountSuggestions = useMemo(() => {
-    return [...discountSuggestions].sort((left, right) => {
-      const leftRaw = left.discount_type === 'percentage' ? (amount * left.discount_value) / 100 : left.discount_value;
-      const rightRaw = right.discount_type === 'percentage' ? (amount * right.discount_value) / 100 : right.discount_value;
-
-      const leftEstimated = left.max_discount_amount !== null ? Math.min(leftRaw, left.max_discount_amount) : leftRaw;
-      const rightEstimated = right.max_discount_amount !== null ? Math.min(rightRaw, right.max_discount_amount) : rightRaw;
-
-      return rightEstimated - leftEstimated;
-    });
-  }, [discountSuggestions, amount]);
+    return [...discountSuggestions].sort((left, right) => left.code.localeCompare(right.code));
+  }, [discountSuggestions]);
 
   useEffect(() => {
     if (!showBookForUsers || !selectedBookingUser) {
@@ -405,6 +457,15 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       return [selectedBookingUser, ...current].slice(0, 25);
     });
   }, [selectedBookingUser, showBookForUsers]);
+
+  useEffect(() => {
+    if (!showBookForUsers) {
+      return;
+    }
+
+    setLocalAddresses([]);
+    setShowAddAddressModal(false);
+  }, [selectedBookingUserId, showBookForUsers]);
 
   async function searchUsers() {
     if (!showBookForUsers) {
@@ -464,7 +525,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         .filter(([, quantity]) => quantity > 0)
         .map(([id, quantity]) => ({ id, quantity }));
 
-      const result = await apiRequest<{ success: boolean; data: PriceCalculation }>('/api/services/calculate-price', {
+      const result = await apiRequest<{ success: boolean; data: PricingBreakdown }>('/api/services/calculate-price', {
         method: 'POST',
         body: JSON.stringify({
           bookingType,
@@ -476,7 +537,6 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       });
 
       setPriceCalculation(result.data);
-      setAmount(result.data.finalPrice);
     } catch {
       showToast('Failed to calculate price', 'error');
       setPriceCalculation(null);
@@ -493,6 +553,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   useEffect(() => {
     if (!providerId || !bookingDate) {
       setSlots([]);
+      setSlotStartTime('');
       return;
     }
 
@@ -517,12 +578,15 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       try {
         const payload = await apiRequest<{ slots: Slot[] }>(`/api/bookings/available-slots?${search.toString()}`);
         if (isMounted) {
-          setSlots(payload.slots);
-          const first = payload.slots[0]?.start_time ?? '';
+          const normalizedSlots = payload.slots ?? [];
+          setSlots(normalizedSlots);
+          const first = normalizedSlots[0]?.start_time ?? '';
           setSlotStartTime(first);
         }
       } catch {
         if (isMounted) {
+          setSlots([]);
+          setSlotStartTime('');
           showToast('Unable to fetch slots.', 'error');
         }
       }
@@ -642,7 +706,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     if (bookingMode === 'home_visit') {
       if (!locationAddress.trim() || !latitude || !longitude) {
         setFlowState('collecting');
-        showToast('Home visit requires address and map coordinates.', 'error');
+        showToast('For home visit, add your address and use location detection.', 'error');
         return;
       }
     }
@@ -670,8 +734,8 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
         basePayload.providerServiceId = serviceId;
       } else if (bookingType === 'package' && priceCalculation) {
         basePayload.packageId = selectedPackageId;
-        basePayload.discountAmount = priceCalculation.discountAmount;
-        basePayload.finalPrice = priceCalculation.finalPrice;
+        basePayload.discountAmount = priceCalculation.discount_amount;
+        basePayload.finalPrice = priceCalculation.final_total;
       }
 
       const validationPayload = {
@@ -715,7 +779,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           bookingMode,
           providerName,
           petName,
-          totalAmount: discountPreview?.finalAmount ?? priceCalculation?.finalPrice ?? amount,
+          totalAmount: discountPreview?.finalAmount ?? priceCalculation?.final_total ?? 0,
         });
 
         setFlowState('success');
@@ -731,6 +795,290 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   function clearDiscount() {
     setDiscountCode('');
     setDiscountPreview(null);
+  }
+
+  function formatSavedAddress(address: SavedAddress) {
+    return [
+      address.address_line_1,
+      address.address_line_2,
+      address.city,
+      address.state,
+      address.pincode,
+      address.country,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .join(', ');
+  }
+
+  useEffect(() => {
+    if (!showAddAddressModal) {
+      return;
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCurrentLatitude(String(position.coords.latitude));
+        setCurrentLongitude(String(position.coords.longitude));
+      },
+      () => {
+        setCurrentLatitude('');
+        setCurrentLongitude('');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+      },
+    );
+  }, [showAddAddressModal]);
+
+  function openAddAddressModal() {
+    if (requiresBookingUserSelection) {
+      setLocationError('Select a customer first to manage addresses.');
+      showToast('Select a customer first to manage addresses.', 'error');
+      return;
+    }
+
+    setSelectedSavedAddressId(null);
+    setNewAddress(locationAddress);
+    setNewLatitude(latitude);
+    setNewLongitude(longitude);
+    setLocationSource(latitude && longitude ? 'pinned' : 'none');
+    setLocationError(null);
+    setShowAddAddressModal(true);
+  }
+
+  function closeAddAddressModal() {
+    setShowAddAddressModal(false);
+    setLocationError(null);
+  }
+
+  function removeLocalAddress(addressId: string) {
+    setLocalAddresses((previous) => previous.filter((address) => address.id !== addressId));
+
+    if (selectedSavedAddressId === addressId) {
+      setSelectedSavedAddressId(null);
+      setLocationAddress('');
+      setLatitude('');
+      setLongitude('');
+    }
+  }
+
+  async function deleteAddress(address: SelectableAddress) {
+    const isLocalAddress = address.id.startsWith('local-');
+
+    if (isLocalAddress) {
+      removeLocalAddress(address.id);
+      setConfirmDeleteAddressId(null);
+      return;
+    }
+
+    if (showBookForUsers && !selectedBookingUserId) {
+      showToast('Select a customer first to delete addresses.', 'error');
+      return;
+    }
+
+    setDeletingAddressId(address.id);
+
+    try {
+      const query = showBookForUsers && selectedBookingUserId ? `?userId=${encodeURIComponent(selectedBookingUserId)}` : '';
+
+      await apiRequest<{ success: boolean }>(`/api/bookings/user-addresses/${address.id}${query}`, {
+        method: 'DELETE',
+      });
+
+      setSavedAddresses((previous) => previous.filter((item) => item.id !== address.id));
+      setConfirmDeleteAddressId(null);
+
+      if (selectedSavedAddressId === address.id) {
+        setSelectedSavedAddressId(null);
+        setLocationAddress('');
+        setLatitude('');
+        setLongitude('');
+      }
+
+      showToast('Address deleted.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete address.';
+      showToast(message, 'error');
+    } finally {
+      setDeletingAddressId(null);
+    }
+  }
+
+  function requestDeleteAddress(addressId: string) {
+    setConfirmDeleteAddressId(addressId);
+  }
+
+  function cancelDeleteAddress() {
+    setConfirmDeleteAddressId(null);
+  }
+
+  function selectSavedAddress(address: SelectableAddress) {
+    setSelectedSavedAddressId(address.id);
+    setLocationAddress(formatSavedAddress(address));
+
+    if (address.latitude !== null && address.longitude !== null) {
+      setLatitude(String(address.latitude));
+      setLongitude(String(address.longitude));
+      setShowAddAddressModal(false);
+      setLocationError(null);
+      return;
+    }
+
+    setLatitude('');
+    setLongitude('');
+    setNewAddress(formatSavedAddress(address));
+    setNewLatitude('');
+    setNewLongitude('');
+    setLocationSource('none');
+    setShowAddAddressModal(true);
+    setLocationError('This saved address has no map pin yet. Use current location, detect from address, or drop a pin.');
+  }
+
+  async function detectCoordinatesFromAddress() {
+    const normalizedAddress = newAddress.trim();
+
+    if (!normalizedAddress) {
+      setLocationError('Enter your address first, then detect location.');
+      return;
+    }
+
+    setLocationError(null);
+    setIsDetectingAddress(true);
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(normalizedAddress)}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Unable to detect location from this address right now.');
+      }
+
+      const result = (await response.json().catch(() => [])) as Array<{ lat?: string; lon?: string }>;
+      const match = result[0];
+
+      if (!match?.lat || !match?.lon) {
+        throw new Error('We could not match this address. Try a more complete address.');
+      }
+
+      if (locationSource !== 'pinned') {
+        setNewLatitude(match.lat);
+        setNewLongitude(match.lon);
+        setLocationSource('detected');
+      }
+    } catch (error) {
+      setLocationError(error instanceof Error ? error.message : 'Unable to detect location from address.');
+    } finally {
+      setIsDetectingAddress(false);
+    }
+  }
+
+  async function useCurrentLocation() {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocationError('Location is not supported on this device/browser.');
+      return;
+    }
+
+    setLocationError(null);
+    setIsDetectingCurrentLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = String(position.coords.latitude);
+        const lng = String(position.coords.longitude);
+        setCurrentLatitude(lat);
+        setCurrentLongitude(lng);
+
+        if (locationSource !== 'pinned') {
+          setNewLatitude(lat);
+          setNewLongitude(lng);
+          setLocationSource('current');
+        }
+
+        setIsDetectingCurrentLocation(false);
+      },
+      (error) => {
+        const message =
+          error.code === error.PERMISSION_DENIED
+            ? 'Location permission denied. Please allow location access.'
+            : 'Unable to fetch your current location.';
+        setLocationError(message);
+        setIsDetectingCurrentLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+      },
+    );
+  }
+
+  function saveNewAddress() {
+    if (requiresBookingUserSelection) {
+      setLocationError('Select a customer first to save address.');
+      showToast('Select a customer first to save address.', 'error');
+      return;
+    }
+
+    const fullAddress = newAddress.trim();
+    const phoneDigits = newPhone.replace(/\D/g, '');
+
+    if (!fullAddress) {
+      setLocationError('Please enter full address.');
+      return;
+    }
+
+    if (phoneDigits.length !== 10) {
+      setLocationError('Enter a valid 10-digit phone number.');
+      return;
+    }
+
+    const effectiveLatitude = locationSource === 'pinned' ? newLatitude : newLatitude || currentLatitude;
+    const effectiveLongitude = locationSource === 'pinned' ? newLongitude : newLongitude || currentLongitude;
+
+    if (!effectiveLatitude || !effectiveLongitude) {
+      setLocationError('Set location using current location or by dropping a pin.');
+      return;
+    }
+
+    const localId = `local-${Date.now()}`;
+    const saved: SelectableAddress = {
+      id: localId,
+      label: 'Other',
+      address_line_1: fullAddress,
+      address_line_2: null,
+      city: '',
+      state: '',
+      pincode: '',
+      country: 'India',
+      latitude: Number(effectiveLatitude),
+      longitude: Number(effectiveLongitude),
+      is_default: false,
+      phone: `+91${phoneDigits}`,
+    };
+
+    setLocalAddresses((previous) => [saved, ...previous]);
+    setSelectedSavedAddressId(localId);
+    setLocationAddress(fullAddress);
+    setLatitude(effectiveLatitude);
+    setLongitude(effectiveLongitude);
+    setShowAddAddressModal(false);
+    setLocationError(null);
+    setNewAddress('');
+    setNewPhone('');
+    setNewLatitude('');
+    setNewLongitude('');
+    setCurrentLatitude('');
+    setCurrentLongitude('');
+    setLocationSource('none');
   }
 
   const applyDiscountCandidates = useCallback(async (codes: string[], silent: boolean) => {
@@ -1102,7 +1450,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
 
         <input
           type="number"
-          value={discountPreview?.baseAmount ?? amount}
+          value={discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0}
           readOnly
           className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
           min={0}
@@ -1161,38 +1509,209 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           ) : null}
 
           <div className="mt-3 grid gap-1 text-xs text-[#6b6b6b]">
-            <p>Base amount: ₹{discountPreview?.baseAmount ?? amount}</p>
+            <p>Base amount: ₹{discountPreview?.baseAmount ?? priceCalculation?.base_total ?? 0}</p>
             <p>Discount applied to service bill: ₹{discountPreview?.discountAmount ?? 0}</p>
-            <p className="font-semibold text-ink">Estimated payable to provider after service: ₹{discountPreview?.finalAmount ?? amount}</p>
+            <p className="font-semibold text-ink">Estimated payable to provider after service: ₹{discountPreview?.finalAmount ?? priceCalculation?.final_total ?? 0}</p>
           </div>
         </div>
 
         {bookingMode === 'home_visit' ? (
           <>
-            <FormField label="Home visit address">
-              <input
-                value={locationAddress}
-                onChange={(event) => setLocationAddress(event.target.value)}
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm sm:col-span-2"
-                placeholder="Home visit address"
-              />
-            </FormField>
-            <input
-              type="number"
-              step="0.000001"
-              value={latitude}
-              onChange={(event) => setLatitude(event.target.value)}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              placeholder="Latitude"
-            />
-            <input
-              type="number"
-              step="0.000001"
-              value={longitude}
-              onChange={(event) => setLongitude(event.target.value)}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-              placeholder="Longitude"
-            />
+            <div className="sm:col-span-2 space-y-2">
+              <p className="text-xs font-semibold text-ink">Saved addresses</p>
+              {requiresBookingUserSelection ? (
+                <p className="text-xs text-[#6b6b6b]">Select a customer first to view or manage addresses.</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {allAddresses.length > 0 ? (
+                  allAddresses.map((address) => {
+                    const isSelected = selectedSavedAddressId === address.id;
+                    const chipLabel = address.label ? `${address.label} · ${address.address_line_1}` : address.address_line_1;
+                    const isLocalAddress = address.id.startsWith('local-');
+
+                    return (
+                      <div
+                        key={address.id}
+                        className={`rounded-full border px-2.5 py-1 text-xs transition-all ${
+                          isSelected
+                            ? 'border-coral bg-orange-50 text-coral'
+                            : 'border-[#f2dfcf] bg-white text-ink hover:border-coral'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => selectSavedAddress(address)}
+                          disabled={requiresBookingUserSelection}
+                          className="rounded-full"
+                        >
+                          {chipLabel}
+                        </button>
+                        {confirmDeleteAddressId === address.id ? (
+                          <span className="ml-2 inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void deleteAddress(address)}
+                              disabled={deletingAddressId === address.id}
+                              className="font-semibold text-red-600 disabled:opacity-50"
+                              aria-label="Confirm delete address"
+                            >
+                              {deletingAddressId === address.id ? '…' : '✓'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelDeleteAddress}
+                              disabled={deletingAddressId === address.id}
+                              className="font-semibold text-[#7a7a7a] disabled:opacity-50"
+                              aria-label="Cancel delete address"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => requestDeleteAddress(address.id)}
+                            disabled={deletingAddressId === address.id}
+                            className="ml-2 font-semibold text-[#7a7a7a] hover:text-red-600 disabled:opacity-50"
+                            aria-label="Delete saved address"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-[#6b6b6b]">No saved addresses yet.</p>
+                )}
+                <button
+                  type="button"
+                  onClick={openAddAddressModal}
+                  disabled={requiresBookingUserSelection}
+                  className="rounded-full border border-[#f2dfcf] bg-white px-2.5 py-1 text-xs text-ink hover:border-coral"
+                >
+                  + Add New Address
+                </button>
+              </div>
+            </div>
+
+            {locationAddress && latitude && longitude ? (
+              <div className="sm:col-span-2 rounded-xl border border-[#f2dfcf] bg-[#fffaf6] px-3 py-2 text-xs text-[#6b6b6b]">
+                <p className="text-sm font-medium text-ink">{locationAddress}</p>
+                <p>📍 {Number(latitude).toFixed(5)}, {Number(longitude).toFixed(5)}</p>
+                <button
+                  type="button"
+                  onClick={openAddAddressModal}
+                  className="mt-1 text-xs font-semibold text-coral hover:underline"
+                >
+                  Change address
+                </button>
+              </div>
+            ) : null}
+
+            {locationError && !showAddAddressModal ? <p className="sm:col-span-2 text-xs text-red-600">{locationError}</p> : null}
+
+            {showAddAddressModal ? (
+              <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
+                <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-[#f2dfcf] px-5 py-4">
+                    <h3 className="text-base font-semibold text-ink">Add New Address</h3>
+                    <button
+                      type="button"
+                      onClick={closeAddAddressModal}
+                      className="rounded-full border border-[#f2dfcf] px-3 py-1 text-xs font-medium text-ink hover:border-coral"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="max-h-[75vh] space-y-4 overflow-y-auto px-5 py-4">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-ink">Full Address</label>
+                      <textarea
+                        value={newAddress}
+                        onChange={(event) => {
+                          setNewAddress(event.target.value);
+                          setLocationError(null);
+                        }}
+                        rows={3}
+                        placeholder="Enter full address with landmark"
+                        className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+                      />
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => void useCurrentLocation()}
+                        disabled={isDetectingCurrentLocation}
+                        className="rounded-xl border border-[#f2dfcf] bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-[#fff7f0] disabled:opacity-70"
+                      >
+                        {isDetectingCurrentLocation ? 'Locating…' : 'Use Current Location'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void detectCoordinatesFromAddress()}
+                        disabled={isDetectingAddress}
+                        className="rounded-xl border border-[#f2dfcf] bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-[#fff7f0] disabled:opacity-70"
+                      >
+                        {isDetectingAddress ? 'Detecting…' : 'Detect from Address'}
+                      </button>
+                    </div>
+
+                    <LocationPinMap
+                      latitude={newLatitude}
+                      longitude={newLongitude}
+                      currentLatitude={currentLatitude}
+                      currentLongitude={currentLongitude}
+                      onChange={(nextLat, nextLng) => {
+                        setNewLatitude(String(nextLat));
+                        setNewLongitude(String(nextLng));
+                        setLocationSource('pinned');
+                        setLocationError(null);
+                      }}
+                    />
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-ink">Phone Number</label>
+                      <div className="flex overflow-hidden rounded-xl border border-[#f2dfcf]">
+                        <span className="inline-flex items-center bg-[#fffaf6] px-3 text-sm font-semibold text-ink">+91</span>
+                        <input
+                          type="tel"
+                          inputMode="numeric"
+                          maxLength={10}
+                          value={newPhone}
+                          onChange={(event) => {
+                            setNewPhone(event.target.value.replace(/\D/g, '').slice(0, 10));
+                            setLocationError(null);
+                          }}
+                          placeholder="9876543210"
+                          className="w-full px-3 py-2 text-sm focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {locationError ? <p className="text-xs text-red-600">{locationError}</p> : null}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-[#f2dfcf] px-5 py-4">
+                    <button
+                      type="button"
+                      onClick={closeAddAddressModal}
+                      className="rounded-xl border border-[#f2dfcf] px-4 py-2 text-sm font-medium text-ink"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveNewAddress}
+                      className="rounded-xl bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-4 py-2 text-sm font-semibold text-white"
+                    >
+                      Save Address
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
 

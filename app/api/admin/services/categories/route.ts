@@ -1,76 +1,36 @@
 /**
  * Admin Service Management Endpoints
- * 
- * POST   /api/admin/services/categories - Create category
- * PUT    /api/admin/services/categories/:id - Update category
- * DELETE /api/admin/services/categories/:id - Delete category
+ *
+ * POST /api/admin/services/categories - Create category
  */
 
-import { createClient } from "@supabase/supabase-js";
-import { NextRequest, NextResponse } from "next/server";
-import type { ServiceCategory, ServiceCategoryInput } from "@/lib/service-catalog/types";
+import { NextResponse } from 'next/server';
+import { ADMIN_ROLES, requireApiRole } from '@/lib/auth/api-auth';
+import type { ServiceCategory, ServiceCategoryInput } from '@/lib/service-catalog/types';
+import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
 
-async function requireAdmin(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    throw new Error("Unauthorized");
+export async function POST(request: Request) {
+  const auth = await requireApiRole(ADMIN_ROLES);
+
+  if (auth.response) {
+    return auth.response;
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const supabase = getSupabaseAdminClient();
 
-  const token = authHeader.slice(7);
-  const { data, error } = await supabase.auth.getUser(token);
-
-  if (error || !data.user) {
-    throw new Error("Invalid token");
-  }
-
-  // Check if user is admin
-  const { data: userData, error: userError } = await supabase
-    .from("users")
-    .select("role")
-    .eq("id", data.user.id)
-    .single();
-
-  if (userError || userData?.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-
-  return supabase;
-}
-
-// CREATE CATEGORY
-export async function POST(request: NextRequest) {
   try {
-    const supabase = await requireAdmin(request);
     const body: ServiceCategoryInput = await request.json();
 
-    const { data, error } = await supabase
-      .from("service_categories")
-      .insert(body)
-      .select()
-      .single();
+    const { data, error } = await supabase.from('service_categories').insert(body).select().single();
 
     if (error) {
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(
-      { success: true, data: data as ServiceCategory },
-      { status: 201 }
-    );
+    return NextResponse.json({ success: true, data: data as ServiceCategory }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json(
-      { success: false, error: message },
-      { status: message === "Admin access required" ? 403 : 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
 

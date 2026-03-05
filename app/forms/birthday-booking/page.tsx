@@ -12,8 +12,8 @@ export default function BirthdayBookingFormPage() {
       heroImageFirstOnMobile
     >
       <FadeInSection delay={0.08}>
-        <div className="overflow-hidden rounded-3xl border border-[#f2dfcf] bg-white shadow-soft-md">
-          <div className="h-1.5 w-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)]" aria-hidden="true" />
+        <div className="overflow-hidden rounded-2xl border border-neutral-200/60 bg-white shadow-sm">
+          <div className="h-1.5 w-full bg-neutral-950" aria-hidden="true" />
           <iframe
             src={formEmbeds.birthdayBooking}
             title="Birthday Booking Form"

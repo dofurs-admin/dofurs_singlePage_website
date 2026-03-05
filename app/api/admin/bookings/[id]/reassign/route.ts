@@ -1,21 +1,20 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
+import { ADMIN_ROLES, requireApiRole } from '@/lib/auth/api-auth';
+import { isSlotConflictMessage, logSecurityEvent } from '@/lib/monitoring/security-log';
 
 const reassignSchema = z.object({
   providerId: z.number().int().positive(),
 });
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { role, supabase } = await getApiAuthContext();
+  const auth = await requireApiRole(ADMIN_ROLES);
 
-  if (!role) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
 
-  if (role !== 'admin' && role !== 'staff') {
-    return forbidden();
-  }
+  const { role, user, supabase } = auth.context;
 
   const { id } = await context.params;
   const bookingId = Number(id);
@@ -45,12 +44,45 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     .single();
 
   if (error) {
-    if (error.message.toLowerCase().includes('overlap')) {
+    if (isSlotConflictMessage(error.message)) {
+      logSecurityEvent('warn', 'booking.slot_conflict', {
+        route: 'api/admin/bookings/[id]/reassign',
+        actorId: user.id,
+        actorRole: role,
+        targetId: bookingId,
+        message: error.message,
+        metadata: {
+          providerId: parsed.data.providerId,
+        },
+      });
+
       return NextResponse.json({ error: 'Provider is unavailable for this slot' }, { status: 409 });
     }
 
+    logSecurityEvent('error', 'booking.failure', {
+      route: 'api/admin/bookings/[id]/reassign',
+      actorId: user.id,
+      actorRole: role,
+      targetId: bookingId,
+      message: error.message,
+      metadata: {
+        providerId: parsed.data.providerId,
+      },
+    });
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  logSecurityEvent('info', 'admin.action', {
+    route: 'api/admin/bookings/[id]/reassign',
+    actorId: user.id,
+    actorRole: role,
+    targetId: bookingId,
+    metadata: {
+      action: 'booking_reassigned',
+      providerId: parsed.data.providerId,
+    },
+  });
 
   return NextResponse.json({ success: true, booking: data });
 }

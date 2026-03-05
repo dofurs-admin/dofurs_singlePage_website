@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { INACTIVITY_COOKIE_NAME, isInactivityExpired } from '@/lib/auth/inactivity';
 import { updateSession } from '@/lib/supabase/middleware';
+import { createServerClient } from '@supabase/ssr';
+import { getSupabaseAnonKey, getSupabaseUrl } from '@/lib/supabase/env';
+import { type AppRole, isRoleAllowed } from '@/lib/auth/api-auth';
 
 const protectedRoutes = [
   '/dashboard',
@@ -36,9 +39,35 @@ function isProtectedPath(pathname: string) {
   return protectedRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
+const roleGuards: Array<{ prefix: string; roles: AppRole[] }> = [
+  { prefix: '/dashboard/user', roles: ['user'] },
+  { prefix: '/dashboard/provider', roles: ['provider'] },
+  { prefix: '/dashboard/admin', roles: ['admin', 'staff'] },
+  { prefix: '/api/provider', roles: ['provider', 'admin', 'staff'] },
+  { prefix: '/api/admin', roles: ['admin', 'staff'] },
+];
+
+function getRequiredRoles(pathname: string) {
+  const match = roleGuards.find((guard) => pathname === guard.prefix || pathname.startsWith(`${guard.prefix}/`));
+  return match?.roles ?? null;
+}
+
+function resolveFallbackPath(role: AppRole | null) {
+  if (role === 'admin' || role === 'staff') {
+    return '/dashboard/admin';
+  }
+
+  if (role === 'provider') {
+    return '/dashboard/provider';
+  }
+
+  return '/dashboard/user';
+}
+
 export async function middleware(request: NextRequest) {
-  const response = await updateSession(request);
   const pathname = request.nextUrl.pathname;
+
+  const { response, user } = await updateSession(request);
 
   if (!isProtectedPath(pathname)) {
     return response;
@@ -93,7 +122,58 @@ export async function middleware(request: NextRequest) {
     });
   }
 
-  return response;
+  const requiredRoles = getRequiredRoles(pathname);
+
+  if (!requiredRoles || !user) {
+    return response;
+  }
+
+  const supabase = createServerClient(getSupabaseUrl(), getSupabaseAnonKey(), {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options);
+        });
+      },
+    },
+  });
+
+  const { data: profile } = await supabase.from('users').select('roles(name)').eq('id', user.id).single();
+  const roleName = (Array.isArray(profile?.roles) ? profile?.roles[0] : profile?.roles)?.name as AppRole | undefined;
+
+  // Check if provider account is suspended
+  if (roleName === 'provider') {
+    const { data: provider } = await supabase
+      .from('providers')
+      .select('account_status')
+      .eq('user_id', user.id)
+      .single();
+
+    if (provider?.account_status === 'suspended' || provider?.account_status === 'banned') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Account suspended' }, { status: 403 });
+      }
+      const suspendedUrl = request.nextUrl.clone();
+      suspendedUrl.pathname = '/auth/suspended';
+      return NextResponse.redirect(suspendedUrl);
+    }
+  }
+
+  if (isRoleAllowed(roleName ?? null, requiredRoles)) {
+    return response;
+  }
+
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const fallbackUrl = request.nextUrl.clone();
+  fallbackUrl.pathname = resolveFallbackPath(roleName ?? null);
+  return NextResponse.redirect(fallbackUrl);
+
 }
 
 export const config = {

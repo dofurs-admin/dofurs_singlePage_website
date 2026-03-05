@@ -3,50 +3,25 @@
  * DELETE /api/admin/services/addons/:id - Delete add-on
  */
 
-import { createClient } from "@supabase/supabase-js";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
 import type { ServiceAddon, ServiceAddonInput } from "@/lib/service-catalog/types";
-
-async function requireAdmin(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    throw new Error("Unauthorized");
-  }
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
-  const token = authHeader.slice(7);
-  const { data, error } = await supabase.auth.getUser(token);
-
-  if (error || !data.user) {
-    throw new Error("Invalid token");
-  }
-
-  // Check if user is admin
-  const { data: userData, error: userError } = await supabase
-    .from("users")
-    .select("role")
-    .eq("id", data.user.id)
-    .single();
-
-  if (userError || userData?.role !== "admin") {
-    throw new Error("Admin access required");
-  }
-
-  return supabase;
-}
+import { ADMIN_ROLES, requireApiRole } from '@/lib/auth/api-auth';
+import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
 
 // UPDATE ADD-ON
 export async function PUT(
-  request: NextRequest,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireApiRole(ADMIN_ROLES);
+
+  if (auth.response) {
+    return auth.response;
+  }
+
   try {
     const { id } = await context.params;
-    const supabase = await requireAdmin(request);
+    const supabase = getSupabaseAdminClient();
     const body: Partial<ServiceAddonInput> = await request.json();
 
     const { data, error } = await supabase
@@ -78,12 +53,18 @@ export async function PUT(
 
 // DELETE ADD-ON
 export async function DELETE(
-  request: NextRequest,
+  _request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireApiRole(ADMIN_ROLES);
+
+  if (auth.response) {
+    return auth.response;
+  }
+
   try {
     const { id } = await context.params;
-    const supabase = await requireAdmin(request);
+    const supabase = getSupabaseAdminClient();
 
     const { error } = await supabase
       .from("service_addons")
@@ -102,7 +83,7 @@ export async function DELETE(
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
       { success: false, error: message },
-      { status: message === "Admin access required" ? 403 : 500 }
+      { status: 500 }
     );
   }
 }

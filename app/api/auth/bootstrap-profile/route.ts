@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server-client';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 export async function POST() {
   const supabase = await getSupabaseServerClient();
@@ -22,7 +23,8 @@ export async function POST() {
   let existingProfile = existingProfileData;
 
   if (existingProfileError) {
-    return NextResponse.json({ error: existingProfileError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(existingProfileError, 'Unable to bootstrap profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   if (!existingProfile) {
@@ -79,7 +81,8 @@ export async function POST() {
     );
 
     if (createProfileError) {
-      return NextResponse.json({ error: createProfileError.message }, { status: 500 });
+      const mapped = toFriendlyApiError(createProfileError, 'Unable to bootstrap profile');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
     }
 
     const reloadProfileResult = await supabase
@@ -89,7 +92,8 @@ export async function POST() {
       .maybeSingle();
 
     if (reloadProfileResult.error) {
-      return NextResponse.json({ error: reloadProfileResult.error.message }, { status: 500 });
+      const mapped = toFriendlyApiError(reloadProfileResult.error, 'Unable to bootstrap profile');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
     }
 
     existingProfile = reloadProfileResult.data;
@@ -112,7 +116,8 @@ export async function POST() {
     .maybeSingle();
 
   if (existingOwnerProfileError) {
-    return NextResponse.json({ error: existingOwnerProfileError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(existingOwnerProfileError, 'Unable to bootstrap profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const profilePhone = typeof existingProfile?.phone === 'string' ? existingProfile.phone : null;
@@ -135,7 +140,8 @@ export async function POST() {
     });
 
     if (createOwnerProfileError && createOwnerProfileError.code !== '23505') {
-      return NextResponse.json({ error: createOwnerProfileError.message }, { status: 500 });
+      const mapped = toFriendlyApiError(createOwnerProfileError, 'Unable to bootstrap profile');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
     }
   }
 

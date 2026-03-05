@@ -22,6 +22,7 @@ import type {
   UpdateProviderDocumentInput,
   UpdateProviderProfessionalDetailsInput,
   UpdateAdminProviderLocationInput,
+  UpdateAdminProviderProfileInput,
   UpdateProviderClinicDetailsInput,
   UpdateProviderPricingInput,
   UpdateProviderProfileInput,
@@ -54,10 +55,25 @@ async function getProviderByUserId(supabase: SupabaseClient, userId: string) {
 export async function createProvider(supabase: SupabaseClient, userId: string, input: CreateProviderInput) {
   const { professional_details, clinic_details, ...providerInput } = input;
 
+  const providerDisplayName =
+    providerInput.business_name?.trim() || providerInput.email?.trim() || providerInput.phone_number?.trim() || 'Provider';
+  const legacyProviderType =
+    providerInput.provider_type === 'clinic'
+      ? 'clinic'
+      : providerInput.provider_type === 'groomer'
+      ? 'grooming'
+      : 'home';
+  const legacyAddress = providerInput.address?.trim() || clinic_details?.address?.trim() || 'Address pending';
+
   const { data: provider, error: providerError } = await supabase
     .from('providers')
     .insert({
       user_id: userId,
+      name: providerDisplayName,
+      type: legacyProviderType,
+      address: legacyAddress,
+      start_time: '09:00',
+      end_time: '18:00',
       ...providerInput,
     })
     .select('*')
@@ -400,6 +416,99 @@ export async function enableProvider(supabase: SupabaseClient, providerId: numbe
   return data;
 }
 
+export async function deleteProvider(supabase: SupabaseClient, providerId: number) {
+  const { data: providerServices, error: providerServicesError } = await supabase
+    .from('provider_services')
+    .select('id')
+    .eq('provider_id', providerId);
+
+  if (providerServicesError) {
+    throw providerServicesError;
+  }
+
+  const providerServiceIds = (providerServices ?? []).map((service) => service.id);
+
+  if (providerServiceIds.length > 0) {
+    const { error: pincodeDeleteError } = await supabase
+      .from('provider_service_pincodes')
+      .delete()
+      .in('provider_service_id', providerServiceIds);
+
+    if (pincodeDeleteError && pincodeDeleteError.code !== '42P01') {
+      throw pincodeDeleteError;
+    }
+  }
+
+  const { data: providerBookings, error: providerBookingsError } = await supabase
+    .from('bookings')
+    .select('id')
+    .eq('provider_id', providerId);
+
+  if (providerBookingsError && providerBookingsError.code !== '42P01') {
+    throw providerBookingsError;
+  }
+
+  const bookingIds = (providerBookings ?? []).map((booking) => booking.id);
+
+  if (bookingIds.length > 0) {
+    const { error: transitionEventsDeleteError } = await supabase
+      .from('booking_status_transition_events')
+      .delete()
+      .in('booking_id', bookingIds);
+
+    if (transitionEventsDeleteError && transitionEventsDeleteError.code !== '42P01') {
+      throw transitionEventsDeleteError;
+    }
+
+    const { error: bookingsDeleteError } = await supabase
+      .from('bookings')
+      .delete()
+      .eq('provider_id', providerId);
+
+    if (bookingsDeleteError && bookingsDeleteError.code !== '42P01') {
+      throw bookingsDeleteError;
+    }
+  }
+
+  const dependentProviderTables = [
+    'provider_booking_completion_tasks',
+    'provider_blocks',
+    'provider_blocked_dates',
+    'provider_admin_audit_events',
+    'provider_review_response_history',
+    'provider_reviews',
+    'provider_documents',
+    'provider_availability',
+    'provider_professional_details',
+    'provider_clinic_details',
+  ];
+
+  for (const tableName of dependentProviderTables) {
+    const { error } = await supabase.from(tableName).delete().eq('provider_id', providerId);
+
+    if (error && error.code !== '42P01') {
+      throw error;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('providers')
+    .delete()
+    .eq('id', providerId)
+    .select('*')
+    .maybeSingle<Provider>();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error('Provider not found or already deleted');
+  }
+
+  return data;
+}
+
 export async function updateProviderPricing(
   supabase: SupabaseClient,
   providerId: number,
@@ -485,21 +594,116 @@ export async function updateProviderServiceRollout(
   providerId: number,
   rolloutRows: AdminProviderServiceRolloutInput,
 ) {
-  const rows = rolloutRows.map((row) => ({
-    id: row.id,
-    provider_id: providerId,
-    service_type: row.service_type,
-    base_price: row.base_price,
-    surge_price: row.surge_price ?? null,
-    commission_percentage: row.commission_percentage ?? null,
-    service_duration_minutes: row.service_duration_minutes ?? null,
-    is_active: row.is_active ?? true,
-  }));
+  const normalizedServiceTypes = Array.from(
+    new Set(rolloutRows.map((row) => row.service_type.trim()).filter((value) => value.length > 0)),
+  );
 
-  const { error: upsertError } = await supabase.from('provider_services').upsert(rows, { onConflict: 'id' });
+  const { data: existingProviderServices, error: existingServicesError } = await supabase
+    .from('provider_services')
+    .select('id, service_type, base_price, surge_price, commission_percentage, service_duration_minutes')
+    .eq('provider_id', providerId)
+    .in('service_type', normalizedServiceTypes);
 
-  if (upsertError) {
-    throw upsertError;
+  if (existingServicesError) {
+    throw existingServicesError;
+  }
+
+  const { data: templateServices, error: templateServicesError } = await supabase
+    .from('provider_services')
+    .select('service_type, base_price, surge_price, commission_percentage, service_duration_minutes')
+    .is('provider_id', null)
+    .in('service_type', normalizedServiceTypes);
+
+  if (templateServicesError) {
+    throw templateServicesError;
+  }
+
+  const existingById = new Map<string, (typeof existingProviderServices)[number]>();
+  const existingByType = new Map<string, (typeof existingProviderServices)[number]>();
+
+  for (const service of existingProviderServices ?? []) {
+    existingById.set(service.id, service);
+    existingByType.set(service.service_type.trim().toLowerCase(), service);
+  }
+
+  const templateByType = new Map<string, (typeof templateServices)[number]>();
+
+  for (const template of templateServices ?? []) {
+    templateByType.set(template.service_type.trim().toLowerCase(), template);
+  }
+
+  const existingRows: Array<{
+    id: string;
+    provider_id: number;
+    service_type: string;
+    base_price: number;
+    surge_price: number | null;
+    commission_percentage: number | null;
+    service_duration_minutes: number | null;
+    is_active: boolean;
+  }> = [];
+  const newRows: Array<{
+    provider_id: number;
+    service_type: string;
+    base_price: number;
+    surge_price: number | null;
+    commission_percentage: number | null;
+    service_duration_minutes: number | null;
+    is_active: boolean;
+  }> = [];
+
+  for (const row of rolloutRows) {
+    const normalizedType = row.service_type.trim().toLowerCase();
+    const existingService = row.id ? existingById.get(row.id) : existingByType.get(normalizedType);
+    const templateService = templateByType.get(normalizedType);
+
+    const resolvedBasePrice = row.base_price ?? existingService?.base_price ?? templateService?.base_price ?? 0;
+    const resolvedSurgePrice =
+      row.surge_price ?? existingService?.surge_price ?? templateService?.surge_price ?? null;
+    const resolvedCommission =
+      row.commission_percentage ?? existingService?.commission_percentage ?? templateService?.commission_percentage ?? null;
+    const resolvedDuration =
+      row.service_duration_minutes ??
+      existingService?.service_duration_minutes ??
+      templateService?.service_duration_minutes ??
+      null;
+
+    const payload = {
+      provider_id: providerId,
+      service_type: row.service_type,
+      base_price: resolvedBasePrice,
+      surge_price: resolvedSurgePrice,
+      commission_percentage: resolvedCommission,
+      service_duration_minutes: resolvedDuration,
+      is_active: row.is_active ?? true,
+    };
+
+    const resolvedId = existingService?.id ?? row.id;
+
+    if (resolvedId) {
+      existingRows.push({
+        id: resolvedId,
+        ...payload,
+      });
+    } else {
+      newRows.push(payload);
+    }
+  }
+
+  if (existingRows.length > 0) {
+    const { error: upsertError } = await supabase.from('provider_services').upsert(existingRows, { onConflict: 'id' });
+
+    if (upsertError) {
+      throw upsertError;
+    }
+  }
+
+  if (newRows.length > 0) {
+    const { error: insertError } = await supabase.from('provider_services').insert(newRows);
+
+    if (insertError) {
+      throw insertError;
+    }
   }
 
   const { data: services, error: servicesError } = await supabase
@@ -515,14 +719,16 @@ export async function updateProviderServiceRollout(
   const serviceByType = new Map<string, (typeof services)[number]>();
 
   for (const service of services ?? []) {
-    serviceByType.set(service.service_type.toLowerCase(), service);
+    serviceByType.set(service.service_type.trim().toLowerCase(), service);
   }
 
   const coverageRows: { provider_service_id: string; pincode: string; is_enabled: boolean }[] = [];
   const touchedServiceIds = new Set<string>();
 
   for (const row of rolloutRows) {
-    const service = row.id ? (services ?? []).find((item) => item.id === row.id) : serviceByType.get(row.service_type.toLowerCase());
+    const service = row.id
+      ? (services ?? []).find((item) => item.id === row.id)
+      : serviceByType.get(row.service_type.trim().toLowerCase());
 
     if (!service) {
       continue;
@@ -601,7 +807,9 @@ export async function getAdminServiceModerationSummary(
         base_price_count: 0,
       };
 
-    current.providers.add(row.provider_id);
+    if (typeof row.provider_id === 'number') {
+      current.providers.add(row.provider_id);
+    }
 
     if (row.is_active) {
       current.active_count += 1;
@@ -1243,7 +1451,7 @@ export async function listAdminProviderModerationItems(supabase: SupabaseClient)
     supabase
       .from('providers')
       .select(
-        'id, name, provider_type, business_name, admin_approval_status, verification_status, account_status, average_rating, total_bookings, service_radius_km, created_at, updated_at',
+        'id, user_id, name, email, profile_photo_url, provider_type, business_name, admin_approval_status, verification_status, account_status, average_rating, total_bookings, address, lat, lng, service_radius_km, created_at, updated_at',
       )
       .order('created_at', { ascending: false })
       .limit(300),
@@ -1264,6 +1472,27 @@ export async function listAdminProviderModerationItems(supabase: SupabaseClient)
 
   if (clinicDetailsResult.error) {
     throw clinicDetailsResult.error;
+  }
+
+  const providerUserIds = (providersResult.data ?? [])
+    .map((provider) => provider.user_id)
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  const userAddressById = new Map<string, string | null>();
+
+  if (providerUserIds.length > 0) {
+    const { data: userRows, error: usersError } = await supabase
+      .from('users')
+      .select('id, address')
+      .in('id', providerUserIds);
+
+    if (usersError) {
+      throw usersError;
+    }
+
+    for (const row of userRows ?? []) {
+      userAddressById.set(row.id, row.address ?? null);
+    }
   }
 
   const docsByProvider = new Map<number, { pending: number; approved: number; rejected: number }>();
@@ -1295,18 +1524,24 @@ export async function listAdminProviderModerationItems(supabase: SupabaseClient)
     });
   }
 
-  return (providersResult.data ?? []).map((item) => ({
-    ...item,
-    provider_type: item.provider_type,
-    address: clinicByProvider.get(item.id)?.address ?? null,
-    city: clinicByProvider.get(item.id)?.city ?? null,
-    state: clinicByProvider.get(item.id)?.state ?? null,
-    pincode: clinicByProvider.get(item.id)?.pincode ?? null,
-    latitude: clinicByProvider.get(item.id)?.latitude ?? null,
-    longitude: clinicByProvider.get(item.id)?.longitude ?? null,
-    service_radius_km: item.service_radius_km ?? null,
-    documentCounts: docsByProvider.get(item.id) ?? { pending: 0, approved: 0, rejected: 0 },
-  })) as AdminProviderModerationItem[];
+  return (providersResult.data ?? []).map((item) => {
+    const providerAddress = typeof item.address === 'string' ? item.address.trim() : '';
+    const userAddress = item.user_id ? userAddressById.get(item.user_id) ?? null : null;
+    const normalizedProviderAddress = providerAddress && providerAddress.toLowerCase() !== 'address pending' ? providerAddress : null;
+
+    return {
+      ...item,
+      provider_type: item.provider_type,
+      address: clinicByProvider.get(item.id)?.address ?? normalizedProviderAddress ?? userAddress,
+      city: clinicByProvider.get(item.id)?.city ?? null,
+      state: clinicByProvider.get(item.id)?.state ?? null,
+      pincode: clinicByProvider.get(item.id)?.pincode ?? null,
+      latitude: clinicByProvider.get(item.id)?.latitude ?? item.lat ?? null,
+      longitude: clinicByProvider.get(item.id)?.longitude ?? item.lng ?? null,
+      service_radius_km: item.service_radius_km ?? null,
+      documentCounts: docsByProvider.get(item.id) ?? { pending: 0, approved: 0, rejected: 0 },
+    };
+  }) as AdminProviderModerationItem[];
 }
 
 export async function getAdminProviderLocation(
@@ -1314,7 +1549,7 @@ export async function getAdminProviderLocation(
   providerId: number,
 ): Promise<AdminProviderLocationModeration> {
   const [providerResult, clinicDetailsResult] = await Promise.all([
-    supabase.from('providers').select('id, service_radius_km').eq('id', providerId).maybeSingle(),
+    supabase.from('providers').select('id, user_id, address, lat, lng, service_radius_km').eq('id', providerId).maybeSingle(),
     supabase
       .from('provider_clinic_details')
       .select('provider_id, address, city, state, pincode, latitude, longitude')
@@ -1334,14 +1569,34 @@ export async function getAdminProviderLocation(
     throw new Error('Provider not found');
   }
 
+  let userAddress: string | null = null;
+
+  if (providerResult.data.user_id) {
+    const { data: linkedUser, error: linkedUserError } = await supabase
+      .from('users')
+      .select('address')
+      .eq('id', providerResult.data.user_id)
+      .maybeSingle();
+
+    if (linkedUserError) {
+      throw linkedUserError;
+    }
+
+    userAddress = linkedUser?.address ?? null;
+  }
+
+  const providerAddress = typeof providerResult.data.address === 'string' ? providerResult.data.address.trim() : '';
+  const normalizedProviderAddress =
+    providerAddress && providerAddress.toLowerCase() !== 'address pending' ? providerAddress : null;
+
   return {
     provider_id: providerResult.data.id,
-    address: clinicDetailsResult.data?.address ?? null,
+    address: clinicDetailsResult.data?.address ?? normalizedProviderAddress ?? userAddress,
     city: clinicDetailsResult.data?.city ?? null,
     state: clinicDetailsResult.data?.state ?? null,
     pincode: clinicDetailsResult.data?.pincode ?? null,
-    latitude: clinicDetailsResult.data?.latitude ?? null,
-    longitude: clinicDetailsResult.data?.longitude ?? null,
+    latitude: clinicDetailsResult.data?.latitude ?? providerResult.data.lat ?? null,
+    longitude: clinicDetailsResult.data?.longitude ?? providerResult.data.lng ?? null,
     service_radius_km: providerResult.data.service_radius_km ?? null,
   };
 }
@@ -1542,6 +1797,52 @@ export async function updateAdminProviderLocation(
   }
 
   return getAdminProviderLocation(supabase, providerId);
+}
+
+export async function updateAdminProviderProfile(
+  supabase: SupabaseClient,
+  providerId: number,
+  input: UpdateAdminProviderProfileInput,
+) {
+  const payload: Record<string, unknown> = {};
+
+  if (Object.prototype.hasOwnProperty.call(input, 'name')) {
+    payload.name = input.name?.trim();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'email')) {
+    const normalizedEmail = input.email?.trim().toLowerCase() ?? null;
+    payload.email = normalizedEmail || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'provider_type')) {
+    payload.provider_type = input.provider_type?.trim() || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'business_name')) {
+    payload.business_name = input.business_name?.trim() || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'profile_photo_url')) {
+    payload.profile_photo_url = input.profile_photo_url?.trim() || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'service_radius_km')) {
+    payload.service_radius_km = input.service_radius_km ?? null;
+  }
+
+  const { data, error } = await supabase
+    .from('providers')
+    .update(payload)
+    .eq('id', providerId)
+    .select('id, name, email, profile_photo_url, provider_type, business_name, service_radius_km, updated_at')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
 }
 
 export async function logProviderAdminAuditEvent(

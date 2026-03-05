@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 const profileSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -43,11 +44,13 @@ export async function GET() {
   ]);
 
   if (ownerProfileResult.error && ownerProfileResult.error.code !== 'PGRST116') {
-    return NextResponse.json({ error: ownerProfileResult.error.message }, { status: 500 });
+    const mapped = toFriendlyApiError(ownerProfileResult.error, 'Failed to load profile photo');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   if (providerResult.error && providerResult.error.code !== 'PGRST116') {
-    return NextResponse.json({ error: providerResult.error.message }, { status: 500 });
+    const mapped = toFriendlyApiError(providerResult.error, 'Failed to load profile photo');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const resolvedPhotoUrl =
@@ -89,7 +92,8 @@ export async function PATCH(request: Request) {
     .maybeSingle();
 
   if (existingPhoneProfileError) {
-    return NextResponse.json({ error: existingPhoneProfileError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(existingPhoneProfileError, 'Failed to verify phone number');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   if (existingPhoneProfile) {
@@ -111,7 +115,8 @@ export async function PATCH(request: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Failed to update profile');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   return NextResponse.json({ success: true, profile: data });

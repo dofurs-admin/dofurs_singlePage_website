@@ -1,12 +1,15 @@
 import type { BookingStatus } from './types';
+import { createStateGuard } from '@/lib/utils/stateGuard';
 
-export const BOOKING_STATE_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
+export const BOOKING_STATE_TRANSITIONS: Record<BookingStatus, readonly BookingStatus[]> = {
   pending: ['confirmed', 'cancelled'],
   confirmed: ['completed', 'cancelled', 'no_show'],
   completed: [],
   cancelled: [],
   no_show: [],
 };
+
+const bookingStateGuard = createStateGuard(BOOKING_STATE_TRANSITIONS, { allowSameState: false });
 
 export type BookingActorRole = 'user' | 'provider' | 'admin' | 'staff';
 
@@ -18,17 +21,15 @@ export const ROLE_ALLOWED_BOOKING_STATUSES: Record<BookingActorRole, BookingStat
 };
 
 export function canTransitionBookingState(current: BookingStatus, next: BookingStatus) {
-  if (current === next) {
-    return true;
-  }
-
-  return BOOKING_STATE_TRANSITIONS[current].includes(next);
+  return bookingStateGuard.canTransition(current, next);
 }
 
 export function assertBookingStateTransition(current: BookingStatus, next: BookingStatus) {
-  if (!canTransitionBookingState(current, next)) {
-    throw new Error(`INVALID_BOOKING_TRANSITION:${current}->${next}`);
+  if (current === next) {
+    throw new Error(`BOOKING_STATUS_NOOP:${current}`);
   }
+
+  bookingStateGuard.assertTransition(current, next, 'INVALID_BOOKING_TRANSITION');
 }
 
 export function assertRoleCanSetBookingStatus(role: BookingActorRole, next: BookingStatus) {

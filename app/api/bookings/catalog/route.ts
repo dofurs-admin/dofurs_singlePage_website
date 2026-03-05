@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getApiAuthContext, forbidden, unauthorized } from '@/lib/auth/api-auth';
 import { getProviderIdByUserId } from '@/lib/provider-management/api';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 const querySchema = z.object({
   userId: z.string().uuid().optional(),
@@ -32,6 +33,20 @@ type CatalogDiscount = {
   applies_to_service_type: string | null;
   first_booking_only: boolean;
   valid_until: string | null;
+};
+
+type CatalogAddress = {
+  id: string;
+  label: 'Home' | 'Office' | 'Other' | null;
+  address_line_1: string;
+  address_line_2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  is_default: boolean;
 };
 
 async function listAuthUsers(limit: number): Promise<AuthListUser[]> {
@@ -120,7 +135,8 @@ export async function GET(request: Request) {
     ]);
 
     if (allUsersResult.error) {
-      return NextResponse.json({ error: allUsersResult.error.message }, { status: 500 });
+      const mapped = toFriendlyApiError(allUsersResult.error, 'Failed to load booking catalog');
+      return NextResponse.json({ error: mapped.message }, { status: mapped.status });
     }
 
     const mergedById = new Map<string, BookableUser>();
@@ -185,15 +201,25 @@ export async function GET(request: Request) {
 
   const petsClient = canBookForUsers && selectedUserId !== user.id ? adminClient : supabase;
   const petsRequest = petsClient.from('pets').select('id, name').eq('user_id', selectedUserId).order('name', { ascending: true });
+  const addressesClient = canBookForUsers && selectedUserId !== user.id ? adminClient : supabase;
+  const addressesRequest = addressesClient
+    .from('user_addresses')
+    .select('id, label, address_line_1, address_line_2, city, state, pincode, country, latitude, longitude, is_default')
+    .eq('user_id', selectedUserId)
+    .order('is_default', { ascending: false })
+    .order('created_at', { ascending: false });
 
-  const [providersResult, providerServicesResult, petsResult] = await Promise.all([
+  const [providersResult, providerServicesResult, petsResult, addressesResult] = await Promise.all([
     providersRequest,
     providerServicesRequest,
     petsRequest,
+    addressesRequest,
   ]);
 
-  if (providersResult.error || providerServicesResult.error || petsResult.error) {
-    return NextResponse.json({ error: 'Failed to load booking catalog' }, { status: 500 });
+  if (providersResult.error || providerServicesResult.error || petsResult.error || (addressesResult.error && addressesResult.error.code !== '42P01')) {
+    const error = providersResult.error || providerServicesResult.error || petsResult.error || addressesResult.error;
+    const mapped = toFriendlyApiError(error, 'Failed to load booking catalog');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const providerServices = providerServicesResult.data ?? [];
@@ -211,7 +237,8 @@ export async function GET(request: Request) {
     .limit(100);
 
   if (discountsError && discountsError.code !== '42P01') {
-    return NextResponse.json({ error: discountsError.message }, { status: 500 });
+    const mapped = toFriendlyApiError(discountsError, 'Failed to load discounts');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const mergedServices = [
@@ -234,6 +261,7 @@ export async function GET(request: Request) {
     providers: providersResult.data ?? [],
     services: mergedServices,
     pets: petsResult.data ?? [],
+    addresses: ((addressesResult.data ?? []) as CatalogAddress[]),
     discounts: ((discountsData ?? []) as Array<CatalogDiscount & { is_active: boolean; valid_from: string }>).map((item) => ({
       id: item.id,
       code: item.code,

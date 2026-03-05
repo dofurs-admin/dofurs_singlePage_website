@@ -1,17 +1,27 @@
 import { NextResponse } from 'next/server';
-import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
-import { cancelBooking, confirmBooking, completeBooking, markNoShow, updateBookingStatus } from '@/lib/bookings/service';
+import { forbidden, requireApiRole } from '@/lib/auth/api-auth';
+import {
+  cancelBooking,
+  cancelBookingAsProvider,
+  confirmBooking,
+  completeBooking,
+  markNoShow,
+  updateBookingStatus,
+} from '@/lib/bookings/service';
 import { type BookingStatus } from '@/lib/flows/contracts';
 import { bookingStatusUpdateSchema } from '@/lib/flows/validation';
-import { assertBookingStateTransition, assertRoleCanSetBookingStatus, type BookingActorRole } from '@/lib/bookings/state-transition-guard';
+import { assertRoleCanSetBookingStatus, type BookingActorRole } from '@/lib/bookings/state-transition-guard';
 import { toFriendlyApiError } from '@/lib/api/errors';
+import { logSecurityEvent } from '@/lib/monitoring/security-log';
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { role, supabase, user } = await getApiAuthContext();
+  const auth = await requireApiRole(['user', 'provider', 'admin', 'staff']);
 
-  if (!role || !user) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
+
+  const { role, supabase, user } = auth.context;
 
   const { id } = await context.params;
   const bookingId = Number(id);
@@ -43,12 +53,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   const effectiveRole = role as BookingActorRole;
 
-  const currentStatus = booking.booking_status as BookingStatus;
   const nextStatus = parsed.data.status as BookingStatus;
 
   try {
     assertRoleCanSetBookingStatus(effectiveRole, nextStatus);
-    assertBookingStateTransition(currentStatus, nextStatus);
 
     if (role === 'user') {
       if (parsed.data.status !== 'cancelled') {
@@ -76,10 +84,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
 
       if (parsed.data.status === 'cancelled') {
-        const data = await updateBookingStatus(supabase, bookingId, 'cancelled', {
-          cancellationBy: 'provider',
-          cancellationReason: parsed.data.cancellationReason,
-        });
+        const data = await cancelBookingAsProvider(
+          supabase,
+          user.id,
+          bookingId,
+          parsed.data.cancellationReason,
+          parsed.data.providerNotes,
+        );
         return NextResponse.json({ success: true, booking: data });
       }
 
@@ -90,6 +101,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const data = await updateBookingStatus(supabase, bookingId, parsed.data.status, {
         cancellationBy: parsed.data.status === 'cancelled' ? 'admin' : undefined,
         cancellationReason: parsed.data.cancellationReason,
+        actorId: user.id,
+        actorRole: role,
+        source: 'api/bookings/[id]/status',
       });
       return NextResponse.json({ success: true, booking: data });
     }
@@ -97,6 +111,20 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return forbidden();
   } catch (error) {
     const mapped = toFriendlyApiError(error, 'Unable to update booking');
+    const message = error instanceof Error ? error.message : String(error);
+
+    logSecurityEvent('error', 'booking.failure', {
+      route: 'api/bookings/[id]/status',
+      actorId: user.id,
+      actorRole: role,
+      targetId: bookingId,
+      message,
+      metadata: {
+        requestedStatus: parsed.data.status,
+        responseStatus: mapped.status,
+      },
+    });
+
     return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

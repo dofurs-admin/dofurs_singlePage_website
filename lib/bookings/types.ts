@@ -10,6 +10,31 @@ export type BookableSlot = {
   is_available: boolean;
 };
 
+/**
+ * Slot engine types - exported for consuming components
+ * All slot generation MUST use the slot engine service layer (not direct RPC calls)
+ */
+export type TimeSlot = BookableSlot & {
+  is_available: boolean;
+};
+
+export type DayAvailability = {
+  date: string;
+  dayOfWeek: number;
+  dayName: string;
+  slots: TimeSlot[];
+  is_blocked: boolean;
+  block_reason?: string;
+};
+
+export type PricingBreakdown = {
+  base_total: number;
+  addon_total: number;
+  discount_amount: number;
+  final_total: number;
+  breakdown: string[];
+};
+
 export type BookingRecord = {
   id: number;
   user_id: string;
@@ -85,4 +110,26 @@ export type OverrideBookingInput = {
   cancellationBy?: 'user' | 'provider' | 'admin' | null;
   priceAtBooking?: number;
   adminPriceReference?: number;
+};
+
+export type BookingCreationResponse = {
+  success: boolean;
+  booking_id?: number;
+  user_id?: string;
+  provider_id?: number;
+  service_type?: string | null;
+  booking_date?: string;
+  start_time?: string;
+  end_time?: string;
+  booking_status?: BookingStatus;
+  base_price?: number;
+  discount_code?: string | null;
+  discount_amount?: number;
+  add_on_total?: number;
+  taxable_amount?: number;
+  final_price?: number;
+  payment_mode?: string;
+  created_at?: string;
+  error_code?: string | null;
+  error_message?: string | null;
 };

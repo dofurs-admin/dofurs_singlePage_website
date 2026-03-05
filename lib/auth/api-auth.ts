@@ -3,6 +3,9 @@ import { getSupabaseServerClient } from '@/lib/supabase/server-client';
 
 export type AppRole = 'user' | 'provider' | 'admin' | 'staff';
 
+export const ADMIN_ROLES: AppRole[] = ['admin', 'staff'];
+export const PROVIDER_ROLES: AppRole[] = ['provider', 'admin', 'staff'];
+
 export async function getApiAuthContext() {
   const supabase = await getSupabaseServerClient();
   const {
@@ -33,4 +36,40 @@ export function unauthorized() {
 
 export function forbidden() {
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+}
+
+export function isRoleAllowed(role: AppRole | null, allowedRoles: readonly AppRole[]) {
+  if (!role) {
+    return false;
+  }
+
+  return allowedRoles.includes(role);
+}
+
+export async function getCurrentApiRole() {
+  const { role } = await getApiAuthContext();
+  return role;
+}
+
+export async function requireApiRole(allowedRoles: readonly AppRole[]) {
+  const context = await getApiAuthContext();
+
+  if (!context.user) {
+    return {
+      context: null,
+      response: unauthorized(),
+    } as const;
+  }
+
+  if (!isRoleAllowed(context.role, allowedRoles)) {
+    return {
+      context: null,
+      response: forbidden(),
+    } as const;
+  }
+
+  return {
+    context,
+    response: null,
+  } as const;
 }

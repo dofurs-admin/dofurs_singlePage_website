@@ -5,6 +5,19 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useToast } from '@/components/ui/ToastProvider';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
+import { calculateAgeFromDOB } from '@/lib/utils/date';
+import Modal from '@/components/ui/Modal';
+import PetHeroHeader from './PetHeroHeader';
+import PetStepper from './PetStepper';
+import SectionCard from './SectionCard';
+import FormField from './FormField';
+import VaccinationCard from './VaccinationCard';
+import MedicalRecordCard from './MedicalRecordCard';
+import StickyFooter from './StickyFooter';
+import EmptyState from './EmptyState';
+import SegmentedControl from './SegmentedControl';
+import ProgressRing from './ProgressRing';
+import PetPassportViewModal from './PetPassportViewModal';
 
 type Pet = {
   id: number;
@@ -189,10 +202,8 @@ type ReminderPreferences = {
 type PetCreateForm = {
   name: string;
   breed: string;
-  age: string;
-  weight: string;
+  dateOfBirth: string;
   gender: string;
-  allergies: string;
 };
 
 const STEPS = [
@@ -215,6 +226,37 @@ const AGGRESSION_OPTIONS = [
   'not_sure',
   'other',
 ];
+
+const ENERGY_LEVEL_OPTIONS = ['very_low', 'low', 'moderate', 'high', 'very_high'];
+const SIZE_CATEGORY_OPTIONS = ['toy', 'small', 'medium', 'large', 'giant'];
+const CAPITALIZE_PET_FIELDS: ReadonlyArray<keyof PassportDraft['pet']> = [
+  'name',
+  'breed',
+  'gender',
+  'allergies',
+  'microchipNumber',
+  'color',
+  'sizeCategory',
+  'socialWithDogs',
+  'socialWithCats',
+  'socialWithChildren',
+];
+
+function capitalizeFirstLetter(value: string) {
+  if (!value) {
+    return value;
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function toTitleCaseLabel(value: string) {
+  return value
+    .replaceAll('_', ' ')
+    .split(' ')
+    .map((part) => capitalizeFirstLetter(part))
+    .join(' ');
+}
 
 function emptyDraft(): PassportDraft {
   return {
@@ -344,6 +386,76 @@ function mapProfileToDraft(profile: FullPetProfile): PassportDraft {
   };
 }
 
+function calculateCompletionFromDraft(draftData: PassportDraft): number {
+  const age = draftData.pet.age.trim() ? Number.parseInt(draftData.pet.age, 10) : null;
+  const weight = draftData.pet.weight.trim() ? Number.parseFloat(draftData.pet.weight) : null;
+  const basicComplete =
+    draftData.pet.name.trim().length > 0 &&
+    (age === null || (Number.isFinite(age) && age >= 0 && age <= 40)) &&
+    (weight === null || (Number.isFinite(weight) && weight > 0 && weight <= 300));
+
+  const biteCount = draftData.pet.biteIncidentsCount.trim() ? Number.parseInt(draftData.pet.biteIncidentsCount, 10) : 0;
+  const behaviorTouched =
+    draftData.pet.aggressionLevel.trim().length > 0 ||
+    draftData.pet.socialWithDogs.trim().length > 0 ||
+    draftData.pet.socialWithCats.trim().length > 0 ||
+    draftData.pet.socialWithChildren.trim().length > 0 ||
+    draftData.pet.isBiteHistory ||
+    draftData.pet.houseTrained ||
+    draftData.pet.leashTrained ||
+    draftData.pet.crateTrained ||
+    draftData.pet.separationAnxiety;
+  const behaviorComplete = behaviorTouched && Number.isFinite(biteCount) && biteCount >= 0;
+
+  const vaccinationsTouched = draftData.vaccinations.length > 0;
+  const vaccinationsComplete =
+    vaccinationsTouched &&
+    draftData.vaccinations.every((row) => {
+      if (!row.vaccineName.trim() || !row.administeredDate) {
+        return false;
+      }
+      if (row.nextDueDate && row.nextDueDate < row.administeredDate) {
+        return false;
+      }
+      return true;
+    });
+
+  const medicalTouched = draftData.medicalRecords.length > 0;
+  const medicalComplete = medicalTouched && draftData.medicalRecords.every((row) => row.conditionName.trim().length > 0);
+
+  const feedingComplete =
+    draftData.feedingInfo.foodType.trim().length > 0 ||
+    draftData.feedingInfo.brandName.trim().length > 0 ||
+    draftData.feedingInfo.feedingSchedule.trim().length > 0 ||
+    draftData.feedingInfo.foodAllergies.trim().length > 0 ||
+    draftData.feedingInfo.specialDietNotes.trim().length > 0 ||
+    draftData.feedingInfo.treatsAllowed !== true;
+
+  const groomingComplete =
+    draftData.groomingInfo.coatType.trim().length > 0 ||
+    draftData.groomingInfo.groomingFrequency.trim().length > 0 ||
+    draftData.groomingInfo.lastGroomingDate.trim().length > 0 ||
+    draftData.groomingInfo.nailTrimFrequency.trim().length > 0 ||
+    draftData.groomingInfo.mattingProne;
+
+  const phonePattern = /^[0-9+()\-\s]{7,20}$/;
+  const emergencyPhone = draftData.emergencyInfo.emergencyContactPhone.trim();
+  const preferredPhone = draftData.emergencyInfo.preferredVetPhone.trim();
+  const emergencyTouched =
+    draftData.emergencyInfo.emergencyContactName.trim().length > 0 ||
+    emergencyPhone.length > 0 ||
+    draftData.emergencyInfo.preferredVetClinic.trim().length > 0 ||
+    preferredPhone.length > 0;
+  const emergencyComplete =
+    emergencyTouched &&
+    (!emergencyPhone || phonePattern.test(emergencyPhone)) &&
+    (!preferredPhone || phonePattern.test(preferredPhone));
+
+  const stepCompletions = [basicComplete, behaviorComplete, vaccinationsComplete, medicalComplete, feedingComplete, groomingComplete, emergencyComplete];
+  const completedCount = stepCompletions.filter(Boolean).length;
+  return Math.round((completedCount / 7) * 100);
+}
+
 function normalizePhoneInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -363,6 +475,10 @@ function normalizePhoneInput(value: string) {
 
   const chunks = digits.match(/.{1,3}/g) ?? [digits];
   return `${hasPlus ? '+' : ''}${chunks.join(' ')}`;
+}
+
+function preferNonEmpty(current: string, fallback: string) {
+  return current.trim().length > 0 ? current : fallback;
 }
 
 function stepIndexFromFieldPath(path: string) {
@@ -391,10 +507,13 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [pets, setPets] = useState(initialPets);
   const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
+  const [petCompletions, setPetCompletions] = useState<Record<number, number>>({});
+  const [expandedVaccinations, setExpandedVaccinations] = useState<Record<number, boolean>>({});
+  const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<number, boolean>>({});
   const [selectedPetId, setSelectedPetId] = useState<number | null>(initialPets[0]?.id ?? null);
   const [stepIndex, setStepIndex] = useState(0);
   const [draft, setDraft] = useState<PassportDraft>(emptyDraft());
-  const [newPet, setNewPet] = useState<PetCreateForm>({ name: '', breed: '', age: '', weight: '', gender: '', allergies: '' });
+  const [newPet, setNewPet] = useState<PetCreateForm>({ name: '', breed: '', dateOfBirth: '', gender: '' });
   const [newPetPhotoFile, setNewPetPhotoFile] = useState<File | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [reminders, setReminders] = useState<ReminderGroup[]>([]);
@@ -412,6 +531,12 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'draft-saved' | 'error'>('idle');
   const [lastDraftSavedAt, setLastDraftSavedAt] = useState<string | null>(null);
   const [highlightStepIndex, setHighlightStepIndex] = useState<number | null>(null);
+  const [showCreatePetModal, setShowCreatePetModal] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [viewModalData, setViewModalData] = useState<FullPetProfile | null>(null);
+  const [isLoadingViewData, setIsLoadingViewData] = useState(false);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
 
@@ -420,7 +545,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const draftStorageKey = selectedPetId ? `pet-passport-draft-${selectedPetId}` : null;
 
   const stepCompletion = useMemo(() => {
-    const age = draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null;
+    // Calculate age from dateOfBirth instead of using draft.pet.age
+    const age = draft.pet.dateOfBirth ? calculateAgeFromDOB(draft.pet.dateOfBirth) : null;
     const weight = draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null;
     const basicComplete =
       draft.pet.name.trim().length > 0 &&
@@ -550,6 +676,51 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   }, [pets]);
 
   useEffect(() => {
+    let active = true;
+
+    async function hydrateCompletions() {
+      const entries = await Promise.all(
+        pets.map(async (pet): Promise<[number, number]> => {
+          try {
+            const response = await fetch(`/api/user/pets/${pet.id}/passport`);
+            if (!response.ok) {
+              return [pet.id, 0];
+            }
+
+            const payload = (await response.json().catch(() => null)) as { profile?: FullPetProfile } | null;
+            
+            if (!payload?.profile) {
+              return [pet.id, 0];
+            }
+
+            const profileDraft = mapProfileToDraft(payload.profile);
+            const completion = calculateCompletionFromDraft(profileDraft);
+            return [pet.id, completion];
+          } catch {
+            return [pet.id, 0];
+          }
+        }),
+      );
+
+      if (!active) {
+        return;
+      }
+
+      const next: Record<number, number> = {};
+      entries.forEach(([id, completion]) => {
+        next[id] = completion;
+      });
+      setPetCompletions(next);
+    }
+
+    hydrateCompletions();
+
+    return () => {
+      active = false;
+    };
+  }, [pets]);
+
+  useEffect(() => {
     if (!selectedPetId) {
       setDraft(emptyDraft());
       return;
@@ -575,7 +746,17 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         return;
       }
 
-      const baseDraft = mapProfileToDraft(payload.profile);
+      const profileDraft = mapProfileToDraft(payload.profile);
+      const baseDraft = {
+        ...profileDraft,
+        pet: {
+          ...profileDraft.pet,
+          name: preferNonEmpty(profileDraft.pet.name, selectedPet?.name ?? ''),
+          breed: preferNonEmpty(profileDraft.pet.breed, selectedPet?.breed ?? ''),
+          age: preferNonEmpty(profileDraft.pet.age, selectedPet?.age !== null && selectedPet?.age !== undefined ? String(selectedPet.age) : ''),
+          gender: preferNonEmpty(profileDraft.pet.gender, selectedPet?.gender ?? ''),
+        },
+      };
       const localDraftRaw = window.localStorage.getItem(`pet-passport-draft-${selectedPetId}`);
 
       if (localDraftRaw) {
@@ -586,6 +767,10 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
           pet: {
             ...baseDraft.pet,
             ...parsedLocal.pet,
+            name: preferNonEmpty(parsedLocal.pet?.name ?? '', baseDraft.pet.name),
+            breed: preferNonEmpty(parsedLocal.pet?.breed ?? '', baseDraft.pet.breed),
+            age: preferNonEmpty(parsedLocal.pet?.age ?? '', baseDraft.pet.age),
+            gender: preferNonEmpty(parsedLocal.pet?.gender ?? '', baseDraft.pet.gender),
           },
         };
         setDraft(mergedDraft);
@@ -614,7 +799,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     return () => {
       active = false;
     };
-  }, [selectedPetId, showToast]);
+  }, [selectedPetId, selectedPet, showToast]);
 
   useEffect(() => {
     let active = true;
@@ -686,14 +871,20 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     showToast('Reminder preferences saved.', 'success');
   }
 
-  function saveDraftLocally() {
+  function persistDraftLocally(showSuccessToast = false) {
     if (!draftStorageKey) {
       return;
     }
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
     setLastDraftSavedAt(new Date().toISOString());
     setSaveStatus('draft-saved');
-    showToast('Draft saved locally.', 'success');
+    if (showSuccessToast) {
+      showToast('Draft saved locally.', 'success');
+    }
+  }
+
+  function saveDraftLocally() {
+    persistDraftLocally(true);
   }
 
   useEffect(() => {
@@ -765,16 +956,9 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         return;
       }
 
-      const hasPendingChanges = hasUnsavedChanges;
-      const allowNavigate =
-        !hasPendingChanges || window.confirm('You have unsaved changes. Continue and discard unsaved progress?');
-
-      if (!allowNavigate) {
-        return;
-      }
-
       if (event.key === 'ArrowRight') {
         event.preventDefault();
+        persistDraftLocally(false);
         const nextStep = Math.min(STEPS.length - 1, stepIndex + 1);
         setStepIndex(nextStep);
         setHighlightStepIndex(nextStep);
@@ -783,6 +967,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
 
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
+        persistDraftLocally(false);
         const nextStep = Math.max(0, stepIndex - 1);
         setStepIndex(nextStep);
         setHighlightStepIndex(nextStep);
@@ -794,7 +979,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     return () => {
       window.removeEventListener('keydown', handler);
     };
-  }, [selectedPetId, stepIndex, hasUnsavedChanges]);
+  }, [selectedPetId, stepIndex, draftStorageKey, draft]);
 
   useEffect(() => {
     if (!selectedPetId || isLoadingProfile || !editorRef.current) {
@@ -827,11 +1012,14 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     }
 
     if (stepIndex === 0) {
-      const age = draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null;
+      const dateOfBirth = draft.pet.dateOfBirth.trim() ? draft.pet.dateOfBirth : null;
       const weight = draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null;
 
-      if (age !== null && (!Number.isFinite(age) || age < 0 || age > 40)) {
-        nextErrors['pet.age'] = 'Age must be between 0 and 40.';
+      if (dateOfBirth) {
+        const age = calculateAgeFromDOB(dateOfBirth);
+        if (age === null || age < 0 || age > 150) {
+          nextErrors['pet.dateOfBirth'] = 'Date of birth is invalid.';
+        }
       }
 
       if (weight !== null && (!Number.isFinite(weight) || weight <= 0 || weight > 300)) {
@@ -935,8 +1123,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
       try {
         const uploaded = await uploadCompressedImage(newPetPhotoFile, 'pet-photos');
         photoUrl = uploaded.path;
-      } catch {
-        showToast('Photo upload failed.', 'error');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Photo upload failed.', 'error');
         return;
       }
     }
@@ -948,10 +1136,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         body: JSON.stringify({
           name,
           breed: newPet.breed.trim() || null,
-          age: newPet.age.trim() ? Number.parseInt(newPet.age, 10) : null,
-          weight: newPet.weight.trim() ? Number.parseFloat(newPet.weight) : null,
+          dateOfBirth: newPet.dateOfBirth.trim() || null,
           gender: newPet.gender.trim() || null,
-          allergies: newPet.allergies.trim() || null,
           photoUrl,
         }),
       });
@@ -969,27 +1155,114 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
 
       setPets((current) => [payload.pet!, ...current]);
       setSelectedPetId(payload.pet.id);
-      setNewPet({ name: '', breed: '', age: '', weight: '', gender: '', allergies: '' });
+      setNewPet({ name: '', breed: '', dateOfBirth: '', gender: '' });
       setNewPetPhotoFile(null);
+      setShowCreatePetModal(false);
       showToast('Pet profile created.', 'success');
     });
+  }
+
+  async function deletePetProfile(petId: number, petName: string) {
+    if (!window.confirm(`Are you sure you want to delete ${petName}'s profile? This action cannot be undone.`)) {
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const response = await fetch(`/api/user/pets/${petId}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          showToast('Unable to delete pet profile.', 'error');
+          return;
+        }
+
+        setPets((current) => current.filter((pet) => pet.id !== petId));
+        
+        // If the deleted pet was selected, switch to another pet or clear selection
+        if (selectedPetId === petId) {
+          const remainingPets = pets.filter((pet) => pet.id !== petId);
+          if (remainingPets.length > 0) {
+            setSelectedPetId(remainingPets[0].id);
+          } else {
+            setSelectedPetId(null);
+          }
+        }
+        
+        showToast(`${petName}'s profile deleted successfully.`, 'success');
+      } catch {
+        showToast('An error occurred while deleting the pet profile.', 'error');
+      }
+    });
+  }
+
+  async function openViewModal(petId: number) {
+    setIsLoadingViewData(true);
+    setShowViewModal(true);
+    setViewModalData(null);
+
+    try {
+      const response = await fetch(`/api/user/pets/${petId}/passport`);
+      if (!response.ok) {
+        showToast('Unable to load pet passport.', 'error');
+        setShowViewModal(false);
+        return;
+      }
+
+      const data = await response.json();
+      const profile = data.profile as FullPetProfile;
+      setViewModalData(profile);
+    } catch {
+      showToast('Error loading pet data.', 'error');
+      setShowViewModal(false);
+    } finally {
+      setIsLoadingViewData(false);
+    }
+  }
+
+  function openEditModal(petId: number) {
+    if (selectedPetId !== petId) {
+      if (!canLeaveCurrentContext()) {
+        return;
+      }
+      setSelectedPetId(petId);
+      setStepIndex(0);
+      setHighlightStepIndex(0);
+    }
+    setIsEditMode(true);
+    setShowEditModal(true);
+  }
+
+  function closeEditModal() {
+    if (hasUnsavedChanges) {
+      if (!window.confirm('You have unsaved changes. Close without saving?')) {
+        return;
+      }
+    }
+    setShowEditModal(false);
+    setIsEditMode(false);
   }
 
   function buildStepPayload() {
     const basePayload = { stepIndex };
 
     if (stepIndex === 0) {
+      // Calculate age from dateOfBirth if present
+      const dateOfBirth = draft.pet.dateOfBirth || null;
+      const calculatedAge = dateOfBirth ? calculateAgeFromDOB(dateOfBirth) : null;
+      
       return {
         ...basePayload,
         pet: {
           name: draft.pet.name.trim(),
           breed: draft.pet.breed.trim() || null,
-          age: draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null,
+          dateOfBirth: dateOfBirth,
+          age: calculatedAge,
           weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
           gender: draft.pet.gender.trim() || null,
           allergies: draft.pet.allergies.trim() || null,
           photoUrl: draft.pet.photoUrl.trim() || null,
-          dateOfBirth: draft.pet.dateOfBirth || null,
           microchipNumber: draft.pet.microchipNumber.trim() || null,
           neuteredSpayed: draft.pet.neuteredSpayed,
           color: draft.pet.color.trim() || null,
@@ -1098,7 +1371,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     };
   }
 
-  function saveCurrentStep() {
+  function saveCurrentStepOnly() {
     if (!selectedPetId) {
       showToast('Create or select a pet first.', 'error');
       return;
@@ -1121,7 +1394,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                   ...pet,
                   name: draft.pet.name.trim() || pet.name,
                   breed: draft.pet.breed.trim() || null,
-                  age: draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null,
+                  age: calculateAgeFromDOB(draft.pet.dateOfBirth) ?? pet.age,
                   weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
                   gender: draft.pet.gender.trim() || null,
                   allergies: draft.pet.allergies.trim() || null,
@@ -1217,23 +1490,210 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   }
 
   function updatePetField<K extends keyof PassportDraft['pet']>(key: K, value: PassportDraft['pet'][K]) {
+    const normalizedValue =
+      typeof value === 'string' && CAPITALIZE_PET_FIELDS.includes(key)
+        ? (capitalizeFirstLetter(value) as PassportDraft['pet'][K])
+        : value;
+
     setDraft((current) => ({
       ...current,
       pet: {
         ...current.pet,
-        [key]: value,
+        [key]: normalizedValue,
+      },
+    }));
+  }
+
+  function updateNewPetField<K extends keyof PetCreateForm>(key: K, value: PetCreateForm[K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as PetCreateForm[K]) : value;
+
+    setNewPet((current) => ({
+      ...current,
+      [key]: normalizedValue,
+    }));
+  }
+
+  function updateVaccinationField<K extends keyof VaccinationDraft>(index: number, key: K, value: VaccinationDraft[K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as VaccinationDraft[K]) : value;
+
+    setDraft((current) => ({
+      ...current,
+      vaccinations: current.vaccinations.map((item, itemIndex) => (itemIndex === index ? { ...item, [key]: normalizedValue } : item)),
+    }));
+  }
+
+  function updateMedicalField<K extends keyof MedicalDraft>(index: number, key: K, value: MedicalDraft[K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as MedicalDraft[K]) : value;
+
+    setDraft((current) => ({
+      ...current,
+      medicalRecords: current.medicalRecords.map((item, itemIndex) => (itemIndex === index ? { ...item, [key]: normalizedValue } : item)),
+    }));
+  }
+
+  function updateFeedingField<K extends keyof PassportDraft['feedingInfo']>(key: K, value: PassportDraft['feedingInfo'][K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as PassportDraft['feedingInfo'][K]) : value;
+
+    setDraft((current) => ({
+      ...current,
+      feedingInfo: {
+        ...current.feedingInfo,
+        [key]: normalizedValue,
+      },
+    }));
+  }
+
+  function updateGroomingField<K extends keyof PassportDraft['groomingInfo']>(key: K, value: PassportDraft['groomingInfo'][K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as PassportDraft['groomingInfo'][K]) : value;
+
+    setDraft((current) => ({
+      ...current,
+      groomingInfo: {
+        ...current.groomingInfo,
+        [key]: normalizedValue,
+      },
+    }));
+  }
+
+  function updateEmergencyField<K extends keyof PassportDraft['emergencyInfo']>(key: K, value: PassportDraft['emergencyInfo'][K], capitalize = false) {
+    const normalizedValue =
+      capitalize && typeof value === 'string' ? (capitalizeFirstLetter(value) as PassportDraft['emergencyInfo'][K]) : value;
+
+    setDraft((current) => ({
+      ...current,
+      emergencyInfo: {
+        ...current.emergencyInfo,
+        [key]: normalizedValue,
       },
     }));
   }
 
   function jumpToStepWithHighlight(targetStepIndex: number) {
-    if (targetStepIndex !== stepIndex && !canLeaveCurrentContext()) {
-      return;
-    }
-
     setStepIndex(targetStepIndex);
     setHighlightStepIndex(targetStepIndex);
     editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function goToNextStepWithAutoDraftSave() {
+    persistDraftLocally(false);
+    jumpToStepWithHighlight(Math.min(STEPS.length - 1, stepIndex + 1));
+  }
+
+  function goToPreviousStepWithAutoDraftSave() {
+    persistDraftLocally(false);
+    jumpToStepWithHighlight(Math.max(0, stepIndex - 1));
+  }
+
+  function handleNextOrComplete() {
+    const isLastStep = stepIndex === STEPS.length - 1;
+
+    if (!selectedPetId) {
+      showToast('Create or select a pet first.', 'error');
+      return;
+    }
+
+    if (!validateCurrentStep()) {
+      return;
+    }
+
+    const payload = buildStepPayload();
+
+    startTransition(async () => {
+      setSaveStatus('saving');
+      const previousPets = pets;
+
+      if (stepIndex === 0 && selectedPetId) {
+        const calculatedAge = draft.pet.dateOfBirth ? calculateAgeFromDOB(draft.pet.dateOfBirth) : null;
+        setPets((current) =>
+          current.map((pet) =>
+            pet.id === selectedPetId
+              ? {
+                  ...pet,
+                  name: draft.pet.name.trim() || pet.name,
+                  breed: draft.pet.breed.trim() || null,
+                  age: calculatedAge,
+                  weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
+                  gender: draft.pet.gender.trim() || null,
+                  allergies: draft.pet.allergies.trim() || null,
+                }
+              : pet,
+          ),
+        );
+      }
+
+      const response = await fetch(`/api/user/pets/${selectedPetId}/passport`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        setSaveStatus('error');
+        if (stepIndex === 0) {
+          setPets(previousPets);
+        }
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        showToast(body?.error ?? 'Unable to save this step.', 'error');
+        return;
+      }
+
+      const body = (await response.json().catch(() => null)) as { profile?: FullPetProfile } | null;
+      if (body?.profile) {
+        const normalizedDraft = mapProfileToDraft(body.profile);
+        setDraft(normalizedDraft);
+        setPets((current) =>
+          current.map((pet) =>
+            pet.id === selectedPetId
+              ? {
+                  ...pet,
+                  name: body.profile!.pet.name,
+                  breed: body.profile!.pet.breed,
+                  age: body.profile!.pet.age,
+                  weight: body.profile!.pet.weight,
+                  gender: body.profile!.pet.gender,
+                  allergies: body.profile!.pet.allergies,
+                  photo_url: body.profile!.pet.photo_url,
+                }
+              : pet,
+          ),
+        );
+        setSavedSnapshot(
+          JSON.stringify({
+            draft: normalizedDraft,
+            deletedVaccinationIds: [],
+            deletedMedicalRecordIds: [],
+          }),
+        );
+      }
+
+      if (draftStorageKey) {
+        window.localStorage.removeItem(draftStorageKey);
+      }
+      setFieldErrors({});
+      setDeletedVaccinationIds([]);
+      setDeletedMedicalRecordIds([]);
+      setHasUnsavedChanges(false);
+      setSaveStatus('saved');
+      
+      if (isLastStep) {
+        showToast('Passport completed! All sections saved successfully.', 'success');
+        setStepIndex(0);
+        setHighlightStepIndex(0);
+        setIsEditMode(false);
+        editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        showToast('Step saved.', 'success');
+        const nextStep = Math.min(STEPS.length - 1, stepIndex + 1);
+        setStepIndex(nextStep);
+        setHighlightStepIndex(nextStep);
+        editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
   }
 
   function jumpToFirstError() {
@@ -1245,511 +1705,604 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     jumpToStepWithHighlight(stepIndexFromFieldPath(firstErrorPath));
   }
 
+  function vaccinationStatus(nextDueDate: string) {
+    if (!nextDueDate) {
+      return 'up-to-date' as const;
+    }
+
+    const today = new Date();
+    const dueDate = new Date(nextDueDate);
+    const diffInDays = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffInDays < 0) {
+      return 'overdue' as const;
+    }
+    if (diffInDays <= 14) {
+      return 'due-soon' as const;
+    }
+    return 'up-to-date' as const;
+  }
+
+  const stepDescriptions = [
+    'Capture your pet’s core identity and profile details.',
+    'Document temperament and social compatibility preferences.',
+    'Track immunization history and due dates clearly.',
+    'Maintain conditions, treatments, and care notes.',
+    'Define food preferences, schedule, and restrictions.',
+    'Record coat care and routine grooming needs.',
+    'Store emergency contacts and preferred vet details.',
+  ] as const;
+
   return (
-    <div className="grid gap-5">
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold text-ink">Pet Profiles</h1>
-          <Link
-            href="/dashboard"
-            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink"
-          >
+    <div className="space-y-10 pb-32">
+      <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-neutral-950">Pet Passport</h1>
+            <p className="mt-1 text-sm text-neutral-600">Guided profile setup for medical, behavior, care, and emergency details.</p>
+          </div>
+          <Link href="/dashboard" className="rounded-xl border border-neutral-200/70 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1">
             Back to Dashboard
           </Link>
         </div>
-        <p className="mt-2 text-sm text-[#6b6b6b]">Manage full medical and behavioral passports with reminders and step-by-step saves.</p>
       </section>
 
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-base font-semibold text-ink">Create New Pet</h2>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <input
-            value={newPet.name}
-            onChange={(event) => setNewPet((current) => ({ ...current, name: event.target.value }))}
-            placeholder="Pet name *"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-          <input
-            value={newPet.breed}
-            onChange={(event) => setNewPet((current) => ({ ...current, breed: event.target.value }))}
-            placeholder="Breed"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-          <input
-            value={newPet.age}
-            onChange={(event) => setNewPet((current) => ({ ...current, age: event.target.value }))}
-            type="number"
-            min={0}
-            max={40}
-            placeholder="Age"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-          <input
-            value={newPet.weight}
-            onChange={(event) => setNewPet((current) => ({ ...current, weight: event.target.value }))}
-            type="number"
-            step={0.1}
-            min={0}
-            placeholder="Weight (kg)"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-          <input
-            value={newPet.gender}
-            onChange={(event) => setNewPet((current) => ({ ...current, gender: event.target.value }))}
-            placeholder="Gender"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-          <input
-            value={newPet.allergies}
-            onChange={(event) => setNewPet((current) => ({ ...current, allergies: event.target.value }))}
-            placeholder="Allergies"
-            className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
-          />
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="cursor-pointer rounded-full border border-[#f2dfcf] px-3 py-2 text-xs text-ink">
-            {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload Photo'}
-            <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
-          </label>
-          <button
-            type="button"
-            onClick={createPetProfile}
-            disabled={isPending}
-            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-60"
-          >
-            {isPending ? 'Creating...' : 'Create & Open Passport'}
-          </button>
-        </div>
-      </section>
-
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-base font-semibold text-ink">Upcoming Vaccine Reminders ({reminderPreferences.daysAhead} days)</h2>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="text-xs text-[#6b6b6b] lg:col-span-2">
-            Window (days)
-            <input
-              type="number"
-              min={1}
-              max={90}
-              value={reminderPreferences.daysAhead}
-              onChange={(event) =>
-                setReminderPreferences((current) => ({
-                  ...current,
-                  daysAhead: Math.max(1, Math.min(90, Number.parseInt(event.target.value || '7', 10))),
-                }))
-              }
-              className="mt-1 w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"
+      {pets.length === 0 ? (
+        <SectionCard title="Create a New Pet" description="Start with essentials. You can complete passport sections after creating the profile.">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <FormField
+              label="Pet name"
+              value={newPet.name}
+              onChange={(event) => updateNewPetField('name', event.target.value, true)}
+              placeholder="Pet name *"
             />
-          </label>
-          <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-            <input
-              type="checkbox"
-              checked={reminderPreferences.inAppEnabled}
-              onChange={(event) =>
-                setReminderPreferences((current) => ({ ...current, inAppEnabled: event.target.checked }))
-              }
+            <SegmentedControl
+              label="Pet type"
+              options={[
+                { label: 'Dog', value: 'Dog', icon: '🐶' },
+                { label: 'Cat', value: 'Cat', icon: '🐱' },
+              ]}
+              value={newPet.breed}
+              onChange={(value) => setNewPet((current) => ({ ...current, breed: value }))}
             />
-            In-app
-          </label>
-          <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-            <input
-              type="checkbox"
-              checked={reminderPreferences.emailEnabled}
-              onChange={(event) =>
-                setReminderPreferences((current) => ({ ...current, emailEnabled: event.target.checked }))
-              }
+            <FormField
+              label="Date of birth"
+              type="date"
+              value={newPet.dateOfBirth}
+              onChange={(event) => setNewPet((current) => ({ ...current, dateOfBirth: event.target.value }))}
+              placeholder="Date of birth"
             />
-            Email
-          </label>
-          <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-            <input
-              type="checkbox"
-              checked={reminderPreferences.whatsappEnabled}
-              onChange={(event) =>
-                setReminderPreferences((current) => ({ ...current, whatsappEnabled: event.target.checked }))
-              }
+            <FormField
+              label="Gender"
+              value={newPet.gender}
+              onChange={(event) => updateNewPetField('gender', event.target.value, true)}
+              placeholder="Gender"
             />
-            WhatsApp
-          </label>
-        </div>
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={saveReminderPreferences}
-            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink"
-          >
-            Save Reminder Preferences
-          </button>
-        </div>
-        <ul className="mt-3 grid gap-2 text-sm">
-          {reminders.length === 0 ? <li className="text-[#6b6b6b]">No upcoming reminders.</li> : null}
-          {reminders.map((group) => (
-            <li key={group.petId} className="rounded-xl border border-[#f2dfcf] p-3">
-              <div className="font-semibold text-ink">{group.petName}</div>
-              <div className="mt-1 text-xs text-[#6b6b6b]">
-                {group.vaccinations.map((vax) => `${vax.vaccineName} (${new Date(vax.nextDueDate).toLocaleDateString()})`).join(' • ')}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-base font-semibold text-ink">Select Pet</h2>
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {pets.length === 0 ? (
-            <li className="rounded-xl border border-dashed border-[#f2dfcf] p-3 text-sm text-[#6b6b6b] sm:col-span-2 xl:col-span-3">
-              No pet profiles added yet. Create one to begin passport setup.
-            </li>
-          ) : (
-            pets.map((pet) => (
-              <li
-                key={pet.id}
-                className={`rounded-xl border p-3 text-sm ${selectedPetId === pet.id ? 'border-[#e76f51] bg-[#fff7f0]' : 'border-[#f2dfcf]'}`}
-              >
-                {photoUrls[pet.id] ? (
-                  <Image
-                    src={photoUrls[pet.id]}
-                    alt={`${pet.name} photo`}
-                    width={720}
-                    height={360}
-                    unoptimized
-                    className="mb-3 h-36 w-full rounded-xl object-cover"
-                  />
-                ) : null}
-                <div className="font-semibold text-ink">{pet.name}</div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#6b6b6b]">
-                  {pet.breed ? <span>Breed: {pet.breed}</span> : null}
-                  {pet.age !== null ? <span>Age: {pet.age}</span> : null}
-                  {pet.weight !== null ? <span>Weight: {pet.weight} kg</span> : null}
-                  {pet.gender ? <span>Gender: {pet.gender}</span> : null}
-                  {pet.allergies ? <span>Allergies: {pet.allergies}</span> : null}
-                </div>
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={() => selectPetWithGuard(pet.id)}
-                    className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-3 py-1.5 text-xs font-semibold text-ink"
-                  >
-                    Open Passport
-                  </button>
-                </div>
-              </li>
-            ))
-          )}
-        </ul>
-      </section>
-
-      <section className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-ink">Pet Passport Editor</h2>
-            <p className="mt-1 text-xs text-[#6b6b6b]" role="status" aria-live="polite">
-              {saveStatus === 'saving' ? 'Saving to cloud…' : null}
-              {saveStatus === 'saved' ? 'Saved successfully.' : null}
-              {saveStatus === 'draft-saved' && lastDraftSavedAt ? `Draft auto-saved at ${new Date(lastDraftSavedAt).toLocaleTimeString()}` : null}
-              {saveStatus === 'error' ? 'Last save failed. Please retry.' : null}
-              {saveStatus === 'idle' ? 'Use Save Step to persist each section.' : null}
-            </p>
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer rounded-xl border border-neutral-200/60 px-4 py-2 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm">
+              {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload pet photo'}
+              <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
+            </label>
             <button
               type="button"
-              onClick={saveDraftLocally}
-              className="rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink"
+              onClick={createPetProfile}
+              disabled={isPending}
+              className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
             >
-              Save Draft
+              {isPending ? 'Creating...' : 'Create & Open Passport'}
             </button>
-            <button
-              type="button"
-              onClick={saveCurrentStep}
-              disabled={!selectedPetId || isPending}
-              className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-60"
-            >
-              {isPending ? 'Saving...' : 'Save Step'}
-            </button>
-            {saveStatus === 'error' ? (
-              <button
-                type="button"
-                onClick={saveCurrentStep}
-                disabled={!selectedPetId || isPending}
-                className="rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-60"
-              >
-                Retry Save
-              </button>
-            ) : null}
-            {Object.keys(fieldErrors).length > 0 ? (
-              <button
-                type="button"
-                onClick={jumpToFirstError}
-                className="rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink"
-              >
-                Jump to First Error
-              </button>
-            ) : null}
           </div>
-        </div>
+        </SectionCard>
+      ) : null}
 
-        {saveStatus === 'saving' ? <div className="mt-3 h-1 w-full animate-pulse rounded-full bg-[#f2dfcf]" /> : null}
+      <SectionCard title="Select Pet" description="Choose which pet profile to continue editing.">
+        {pets.length === 0 ? (
+          <EmptyState
+            icon="🐾"
+            title="No pets yet"
+            description="Create your first pet profile above to begin the passport experience."
+          />
+        ) : (
+          <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {pets.map((pet) => {
+              const completion = petCompletions[pet.id] ?? 0;
+              const completionStatus = completion === 100 ? 'complete' : completion >= 70 ? 'high' : completion >= 40 ? 'medium' : 'low';
+              const statusConfig = {
+                complete: { label: 'Complete', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
+                high: { label: 'Almost there', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200' },
+                medium: { label: 'In progress', color: 'text-amber-600', bgColor: 'bg-amber-50', borderColor: 'border-amber-200' },
+                low: { label: 'Getting started', color: 'text-neutral-600', bgColor: 'bg-neutral-50', borderColor: 'border-neutral-200' }
+              };
+              const status = statusConfig[completionStatus];
+              
+              return (
+                <li
+                  key={pet.id}
+                  className="group rounded-2xl border border-neutral-200/60 bg-white overflow-hidden shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  {/* Pet Photo */}
+                  <div className="relative h-36 overflow-hidden">
+                    {photoUrls[pet.id] ? (
+                      <Image
+                        src={photoUrls[pet.id]}
+                        alt={`${pet.name} photo`}
+                        width={720}
+                        height={360}
+                        unoptimized
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-50 to-neutral-100 text-4xl">🐾</div>
+                    )}
+                    {/* Passport Completion Badge */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
+                      <div className={`flex items-center gap-2 rounded-lg ${status.bgColor} ${status.borderColor} border backdrop-blur-sm px-2.5 py-1.5`}>
+                        <div className="relative">
+                          <ProgressRing percentage={completion} radius={14} circumference={88} strokeWidth={2} />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-medium text-neutral-600 uppercase tracking-wide">Passport</span>
+                          <span className={`text-xs font-bold ${status.color} leading-none`}>{status.label}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-        <div className="mt-4 rounded-xl border border-[#f2dfcf] bg-[#fffdfa] p-3">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="font-semibold text-ink">Profile Completion</span>
-            <span className="font-semibold text-[#6b6b6b]">{completionPercent}%</span>
-          </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#f2dfcf]" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completionPercent} aria-label="Pet passport completion progress">
-            <div className="h-full rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] transition-all duration-300 ease-out" style={{ width: `${completionPercent}%` }} />
-          </div>
-          <div className="mt-2 text-[11px] text-[#6b6b6b]">
-            {missingSteps.length === 0 ? (
-              <p>Everything is complete. Great job.</p>
-            ) : (
-              <div className="flex flex-wrap items-center gap-1">
-                <span>What’s missing:</span>
-                {missingSteps.slice(0, 3).map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => jumpToStepWithHighlight(item.index)}
-                    className="rounded-full border border-[#f2dfcf] bg-white px-2 py-0.5 text-[11px] font-semibold text-ink"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-                {missingSteps.length > 3 ? <span>…</span> : null}
-              </div>
-            )}
-          </div>
-        </div>
+                  {/* Pet Details */}
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div>
+                        <h3 className="font-semibold text-neutral-950 text-lg leading-tight">{pet.name}</h3>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-600">
+                          {pet.breed ? <span>{pet.breed}</span> : null}
+                          {pet.age !== null ? <span>{pet.age}y</span> : null}
+                          {pet.weight !== null ? <span>{pet.weight}kg</span> : null}
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-2xl font-bold text-neutral-900">{completion}%</span>
+                        <span className="text-[10px] text-neutral-500 uppercase tracking-wide">Complete</span>
+                      </div>
+                    </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {STEPS.map((step, index) => (
-            <button
-              key={step}
-              type="button"
-              onClick={() => jumpToStepWithHighlight(index)}
-              aria-current={index === stepIndex ? 'step' : undefined}
-              aria-label={`${step} ${stepCompletion[index] ? 'completed' : 'not completed'}`}
-              title={stepCompletion[index] ? `${step} completed` : `${step} not completed`}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                index === stepIndex ? 'border-[#e76f51] bg-[#fff7f0] text-ink' : 'border-[#f2dfcf] text-[#6b6b6b]'
-              }`}
-            >
-              {index + 1}. {step}{' '}
-              <span
-                className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${
-                  stepCompletion[index] ? 'bg-[#e76f51] text-white' : 'bg-[#f2dfcf] text-[#6b6b6b]'
-                }`}
-              >
-                {stepCompletion[index] ? '✓' : '•'}
-              </span>
-            </button>
-          ))}
-        </div>
-        {selectedPet ? <p className="mt-2 text-[11px] text-[#6b6b6b]">Shortcut: press Alt + ← / → to move between steps.</p> : null}
+                    {/* Progress Bar */}
+                    <div className="mb-3 space-y-1.5">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-500 ease-out ${
+                            completionStatus === 'complete' ? 'bg-emerald-500' :
+                            completionStatus === 'high' ? 'bg-blue-500' :
+                            completionStatus === 'medium' ? 'bg-amber-500' :
+                            'bg-neutral-400'
+                          }`}
+                          style={{ width: `${completion}%` }}
+                        />
+                      </div>
+                    </div>
 
-        {isLoadingProfile ? <p className="mt-4 text-sm text-[#6b6b6b]">Loading profile...</p> : null}
-
-        {selectedPet && isLoadingProfile ? (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
-            {Array.from({ length: 9 }).map((_, index) => (
-              <div key={index} className="h-10 animate-pulse rounded-xl border border-[#f2dfcf] bg-[#fff7f0]" />
-            ))}
-          </div>
-        ) : null}
-
-        {!selectedPet ? <p className="mt-4 text-sm text-[#6b6b6b]">Select a pet to start.</p> : null}
-
-        {selectedPet && !isLoadingProfile ? (
-          <div
-            ref={editorRef}
-            className={`mt-4 grid gap-3 rounded-2xl p-2 transition-shadow duration-500 sm:grid-cols-2 lg:grid-cols-3 ${
-              highlightStepIndex === stepIndex ? 'ring-2 ring-[#f4a261]/70' : ''
-            }`}
-          >
-            {stepIndex === 0 ? (
-              <>
-                <input value={draft.pet.name} onChange={(event) => updatePetField('name', event.target.value)} placeholder="Pet name *" aria-invalid={Boolean(getFieldError('pet.name'))} className={inputBaseClass('pet.name')} />
-                <input value={draft.pet.breed} onChange={(event) => updatePetField('breed', event.target.value)} placeholder="Breed" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input type="number" min={0} max={40} value={draft.pet.age} onChange={(event) => updatePetField('age', event.target.value)} placeholder="Age" aria-invalid={Boolean(getFieldError('pet.age'))} className={inputBaseClass('pet.age')} />
-                <input type="number" min={0} step={0.1} value={draft.pet.weight} onChange={(event) => updatePetField('weight', event.target.value)} placeholder="Weight (kg)" aria-invalid={Boolean(getFieldError('pet.weight'))} className={inputBaseClass('pet.weight')} />
-                <input value={draft.pet.gender} onChange={(event) => updatePetField('gender', event.target.value)} placeholder="Gender" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.dateOfBirth} onChange={(event) => updatePetField('dateOfBirth', event.target.value)} type="date" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.microchipNumber} onChange={(event) => updatePetField('microchipNumber', event.target.value)} placeholder="Microchip Number" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.color} onChange={(event) => updatePetField('color', event.target.value)} placeholder="Color" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.sizeCategory} onChange={(event) => updatePetField('sizeCategory', event.target.value)} placeholder="Size Category" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.energyLevel} onChange={(event) => updatePetField('energyLevel', event.target.value)} placeholder="Energy Level" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.allergies} onChange={(event) => updatePetField('allergies', event.target.value)} placeholder="Allergies" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2" />
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-                  <input type="checkbox" checked={draft.pet.neuteredSpayed} onChange={(event) => updatePetField('neuteredSpayed', event.target.checked)} /> Neutered/Spayed
-                </label>
-                {getFieldError('pet.name') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('pet.name')}</p> : null}
-                {getFieldError('pet.age') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('pet.age')}</p> : null}
-                {getFieldError('pet.weight') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('pet.weight')}</p> : null}
-              </>
-            ) : null}
-
-            {stepIndex === 1 ? (
-              <>
-                <select value={draft.pet.aggressionLevel} onChange={(event) => updatePetField('aggressionLevel', event.target.value)} className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-                  <option value="">Aggression level</option>
-                  {AGGRESSION_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option.replaceAll('_', ' ')}</option>
-                  ))}
-                </select>
-                <input type="number" min={0} value={draft.pet.biteIncidentsCount} onChange={(event) => updatePetField('biteIncidentsCount', event.target.value)} placeholder="Bite incidents count" aria-invalid={Boolean(getFieldError('pet.biteIncidentsCount'))} className={inputBaseClass('pet.biteIncidentsCount')} />
-                <input value={draft.pet.socialWithDogs} onChange={(event) => updatePetField('socialWithDogs', event.target.value)} placeholder="Social with dogs" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.socialWithCats} onChange={(event) => updatePetField('socialWithCats', event.target.value)} placeholder="Social with cats" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.pet.socialWithChildren} onChange={(event) => updatePetField('socialWithChildren', event.target.value)} placeholder="Social with children" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.pet.isBiteHistory} onChange={(event) => updatePetField('isBiteHistory', event.target.checked)} /> Bite history</label>
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.pet.houseTrained} onChange={(event) => updatePetField('houseTrained', event.target.checked)} /> House trained</label>
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.pet.leashTrained} onChange={(event) => updatePetField('leashTrained', event.target.checked)} /> Leash trained</label>
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.pet.crateTrained} onChange={(event) => updatePetField('crateTrained', event.target.checked)} /> Crate trained</label>
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.pet.separationAnxiety} onChange={(event) => updatePetField('separationAnxiety', event.target.checked)} /> Separation anxiety</label>
-                {getFieldError('pet.biteIncidentsCount') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('pet.biteIncidentsCount')}</p> : null}
-              </>
-            ) : null}
-
-            {stepIndex === 2 ? (
-              <div className="sm:col-span-2 lg:col-span-3 grid gap-3">
-                {draft.vaccinations.map((row, index) => (
-                  <div key={`${row.id ?? 'new'}-${index}`} className="grid gap-2 rounded-xl border border-[#f2dfcf] p-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <input value={row.vaccineName} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, vaccineName: event.target.value } : item) }))} placeholder="Vaccine name *" aria-invalid={Boolean(getFieldError(`vaccinations.${index}.vaccineName`))} className={inputBaseClass(`vaccinations.${index}.vaccineName`)} />
-                    <input value={row.brandName} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, brandName: event.target.value } : item) }))} placeholder="Brand name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.batchNumber} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, batchNumber: event.target.value } : item) }))} placeholder="Batch number" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.doseNumber} type="number" min={1} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, doseNumber: event.target.value } : item) }))} placeholder="Dose number" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.administeredDate} type="date" onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, administeredDate: event.target.value } : item) }))} aria-invalid={Boolean(getFieldError(`vaccinations.${index}.administeredDate`))} className={inputBaseClass(`vaccinations.${index}.administeredDate`)} />
-                    <input value={row.nextDueDate} type="date" onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, nextDueDate: event.target.value } : item) }))} aria-invalid={Boolean(getFieldError(`vaccinations.${index}.nextDueDate`))} className={inputBaseClass(`vaccinations.${index}.nextDueDate`)} />
-                    <input value={row.veterinarianName} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, veterinarianName: event.target.value } : item) }))} placeholder="Veterinarian name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.clinicName} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, clinicName: event.target.value } : item) }))} placeholder="Clinic name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.certificateUrl} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, certificateUrl: event.target.value } : item) }))} placeholder="Certificate URL" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2" />
-                    <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm">
-                      <input type="checkbox" checked={row.reminderEnabled} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, reminderEnabled: event.target.checked } : item) }))} /> Reminder enabled
-                    </label>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" onClick={() => removeVaccinationRow(index)} className="rounded-full border border-[#f2dfcf] px-3 py-2 text-xs font-semibold text-ink w-fit">Remove</button>
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            vaccinations: [...current.vaccinations, { ...row, id: undefined }],
-                          }))
-                        }
-                        className="rounded-full border border-[#f2dfcf] px-3 py-2 text-xs font-semibold text-ink w-fit"
+                        onClick={() => openViewModal(pet.id)}
+                        className="flex-1 rounded-xl border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1"
                       >
-                        Duplicate
+                        👁️ View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(pet.id)}
+                        className="flex-1 rounded-xl border border-blue-200/70 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 focus-visible:ring-offset-1"
+                      >
+                        ✏️ Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deletePetProfile(pet.id, pet.name)}
+                        disabled={isPending}
+                        className="rounded-xl border border-red-200/70 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                      >
+                        🗑️
                       </button>
                     </div>
-                    {getFieldError(`vaccinations.${index}.vaccineName`) ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-4">{getFieldError(`vaccinations.${index}.vaccineName`)}</p> : null}
-                    {getFieldError(`vaccinations.${index}.administeredDate`) ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-4">{getFieldError(`vaccinations.${index}.administeredDate`)}</p> : null}
-                    {getFieldError(`vaccinations.${index}.nextDueDate`) ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-4">{getFieldError(`vaccinations.${index}.nextDueDate`)}</p> : null}
                   </div>
-                ))}
-                <button type="button" onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { vaccineName: '', brandName: '', batchNumber: '', doseNumber: '', administeredDate: '', nextDueDate: '', veterinarianName: '', clinicName: '', certificateUrl: '', reminderEnabled: true }] }))} className="w-fit rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink">Add Vaccination</button>
-              </div>
-            ) : null}
+                </li>
+              );
+            })}
+            <li
+              className="flex items-center justify-center rounded-2xl border-2 border-dashed border-neutral-300 bg-white p-4 shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md hover:border-coral"
+            >
+              <button
+                type="button"
+                onClick={() => setShowCreatePetModal(true)}
+                className="flex flex-col items-center gap-3"
+              >
+                <div className="text-4xl font-semibold text-neutral-400">+</div>
+                <span className="text-xs font-semibold text-neutral-600">Add Pet</span>
+              </button>
+            </li>
+          </ul>
+        )}
+      </SectionCard>
 
-            {stepIndex === 3 ? (
-              <div className="sm:col-span-2 lg:col-span-3 grid gap-3">
-                {draft.medicalRecords.map((row, index) => (
-                  <div key={`${row.id ?? 'new'}-${index}`} className="grid gap-2 rounded-xl border border-[#f2dfcf] p-3 sm:grid-cols-2">
-                    <input value={row.conditionName} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, conditionName: event.target.value } : item) }))} placeholder="Condition name *" aria-invalid={Boolean(getFieldError(`medicalRecords.${index}.conditionName`))} className={inputBaseClass(`medicalRecords.${index}.conditionName`)} />
-                    <input value={row.diagnosisDate} type="date" onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, diagnosisDate: event.target.value } : item) }))} className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.medications} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, medications: event.target.value } : item) }))} placeholder="Medications" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.vetName} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, vetName: event.target.value } : item) }))} placeholder="Vet name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <input value={row.specialCareInstructions} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, specialCareInstructions: event.target.value } : item) }))} placeholder="Special care instructions" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2" />
-                    <input value={row.documentUrl} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, documentUrl: event.target.value } : item) }))} placeholder="Document URL" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                    <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={row.ongoing} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, ongoing: event.target.checked } : item) }))} /> Ongoing condition</label>
-                    <button type="button" onClick={() => removeMedicalRow(index)} className="rounded-full border border-[#f2dfcf] px-3 py-2 text-xs font-semibold text-ink w-fit">Remove</button>
-                    {getFieldError(`medicalRecords.${index}.conditionName`) ? <p className="text-xs text-[#e76f51] sm:col-span-2">{getFieldError(`medicalRecords.${index}.conditionName`)}</p> : null}
-                  </div>
-                ))}
-                <button type="button" onClick={() => setDraft((current) => ({ ...current, medicalRecords: [...current.medicalRecords, { conditionName: '', diagnosisDate: '', ongoing: false, medications: '', specialCareInstructions: '', vetName: '', documentUrl: '' }] }))} className="w-fit rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink">Add Medical Record</button>
-              </div>
-            ) : null}
-
-            {stepIndex === 4 ? (
-              <>
-                <input value={draft.feedingInfo.foodType} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, foodType: event.target.value } }))} placeholder="Food type" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.feedingInfo.brandName} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, brandName: event.target.value } }))} placeholder="Brand name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.feedingInfo.feedingSchedule} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, feedingSchedule: event.target.value } }))} placeholder="Feeding schedule" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2" />
-                <input value={draft.feedingInfo.foodAllergies} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, foodAllergies: event.target.value } }))} placeholder="Food allergies" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.feedingInfo.specialDietNotes} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, specialDietNotes: event.target.value } }))} placeholder="Special diet notes" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm lg:col-span-2" />
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.feedingInfo.treatsAllowed} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, treatsAllowed: event.target.checked } }))} /> Treats allowed</label>
-              </>
-            ) : null}
-
-            {stepIndex === 5 ? (
-              <>
-                <input value={draft.groomingInfo.coatType} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, coatType: event.target.value } }))} placeholder="Coat type" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.groomingInfo.groomingFrequency} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, groomingFrequency: event.target.value } }))} placeholder="Grooming frequency" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.groomingInfo.lastGroomingDate} type="date" onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, lastGroomingDate: event.target.value } }))} className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input value={draft.groomingInfo.nailTrimFrequency} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, nailTrimFrequency: event.target.value } }))} placeholder="Nail trim frequency" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <label className="flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm"><input type="checkbox" checked={draft.groomingInfo.mattingProne} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, mattingProne: event.target.checked } }))} /> Matting prone</label>
-              </>
-            ) : null}
-
-            {stepIndex === 6 ? (
-              <>
-                <input value={draft.emergencyInfo.emergencyContactName} onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactName: event.target.value } }))} placeholder="Emergency contact name" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input
-                  value={draft.emergencyInfo.emergencyContactPhone}
-                  onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: event.target.value } }))}
-                  onBlur={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: normalizePhoneInput(event.target.value) },
-                    }))
-                  }
-                  placeholder="Emergency contact phone"
-                  aria-invalid={Boolean(getFieldError('emergencyInfo.emergencyContactPhone'))}
-                  className={inputBaseClass('emergencyInfo.emergencyContactPhone')}
-                />
-                <input value={draft.emergencyInfo.preferredVetClinic} onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetClinic: event.target.value } }))} placeholder="Preferred vet clinic" className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-sm" />
-                <input
-                  value={draft.emergencyInfo.preferredVetPhone}
-                  onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: event.target.value } }))}
-                  onBlur={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: normalizePhoneInput(event.target.value) },
-                    }))
-                  }
-                  placeholder="Preferred vet phone"
-                  aria-invalid={Boolean(getFieldError('emergencyInfo.preferredVetPhone'))}
-                  className={inputBaseClass('emergencyInfo.preferredVetPhone')}
-                />
-                {getFieldError('emergencyInfo.emergencyContactPhone') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('emergencyInfo.emergencyContactPhone')}</p> : null}
-                {getFieldError('emergencyInfo.preferredVetPhone') ? <p className="text-xs text-[#e76f51] sm:col-span-2 lg:col-span-3">{getFieldError('emergencyInfo.preferredVetPhone')}</p> : null}
-              </>
-            ) : null}
+      <Modal
+        isOpen={showCreatePetModal}
+        onClose={() => setShowCreatePetModal(false)}
+        title="Create a New Pet"
+        description="Start with essentials. You can complete passport sections after creating the profile."
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField
+              label="Pet name"
+              value={newPet.name}
+              onChange={(event) => updateNewPetField('name', event.target.value, true)}
+              placeholder="Pet name *"
+            />
+            <SegmentedControl
+              label="Pet type"
+              options={[
+                { label: 'Dog', value: 'Dog', icon: '🐶' },
+                { label: 'Cat', value: 'Cat', icon: '🐱' },
+              ]}
+              value={newPet.breed}
+              onChange={(value) => setNewPet((current) => ({ ...current, breed: value }))}
+            />
+            <FormField
+              label="Date of birth"
+              type="date"
+              value={newPet.dateOfBirth}
+              onChange={(event) => setNewPet((current) => ({ ...current, dateOfBirth: event.target.value }))}
+              placeholder="Date of birth"
+            />
+            <FormField
+              label="Gender"
+              value={newPet.gender}
+              onChange={(event) => updateNewPetField('gender', event.target.value, true)}
+              placeholder="Gender"
+            />
           </div>
-        ) : null}
 
-        <div className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => jumpToStepWithHighlight(Math.max(0, stepIndex - 1))}
-            disabled={stepIndex === 0}
-            className="rounded-full border border-[#f2dfcf] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <div className="text-xs text-[#6b6b6b]">Step {stepIndex + 1} of {STEPS.length}</div>
-          <button
-            type="button"
-            onClick={() => jumpToStepWithHighlight(Math.min(STEPS.length - 1, stepIndex + 1))}
-            disabled={stepIndex === STEPS.length - 1}
-            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink disabled:opacity-50"
-          >
-            Next
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer rounded-xl border border-neutral-200/60 px-4 py-2 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm">
+              {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload pet photo'}
+              <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
+            </label>
+            <button
+              type="button"
+              onClick={createPetProfile}
+              disabled={isPending}
+              className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
+            >
+              {isPending ? 'Creating...' : 'Create & Open Passport'}
+            </button>
+          </div>
         </div>
+      </Modal>
 
-        <p className="mt-3 text-[11px] text-[#6b6b6b]">Keyboard shortcuts: <span className="font-semibold">Alt + →</span> next step, <span className="font-semibold">Alt + ←</span> previous step.</p>
-      </section>
+      {selectedPet && showEditModal ? (
+        <Modal isOpen={showEditModal} onClose={closeEditModal} title={`Edit ${selectedPet.name}'s Passport`} size="xl">
+          <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2">
+            <PetHeroHeader
+              petName={selectedPet.name}
+              breed={selectedPet.breed}
+              age={selectedPet.age}
+              photoUrl={photoUrls[selectedPet.id]}
+              completionPercent={completionPercent}
+              lastSavedAt={lastDraftSavedAt}
+            />
+
+            <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-neutral-900">Completion Checklist</h3>
+              <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {STEPS.map((step, index) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() => jumpToStepWithHighlight(index)}
+                  className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 ${stepCompletion[index] ? 'border-emerald-200 bg-emerald-50/60 text-emerald-800' : 'border-neutral-200/70 bg-white text-neutral-600'}`}
+                >
+                  <span>{step}</span>
+                  <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-xs ${stepCompletion[index] ? 'bg-emerald-500 text-white' : 'bg-neutral-200 text-neutral-600'}`}>
+                    {stepCompletion[index] ? '✓' : '•'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <SectionCard title="Pet Passport Editor" description={stepDescriptions[stepIndex]} highlight={highlightStepIndex === stepIndex}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-neutral-600" role="status" aria-live="polite">
+                {saveStatus === 'saving' ? 'Saving to cloud…' : null}
+                {saveStatus === 'saved' ? 'Saved successfully.' : null}
+                {saveStatus === 'draft-saved' && lastDraftSavedAt ? `Draft auto-saved at ${new Date(lastDraftSavedAt).toLocaleTimeString()}` : null}
+                {saveStatus === 'error' ? 'Last save failed. Please retry.' : null}
+                {saveStatus === 'idle' ? 'Use Save Step to persist each section.' : null}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {!isEditMode ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditMode(true)}
+                    className="rounded-xl border border-neutral-200/70 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditMode(false)}
+                    className="rounded-xl border border-neutral-200/70 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={saveDraftLocally}
+                  disabled={!isEditMode}
+                  className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                >
+                  Save Draft
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCurrentStepOnly}
+                  disabled={!selectedPetId || isPending || !isEditMode}
+                  className="rounded-xl bg-coral px-3 py-1.5 text-xs font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                >
+                  {isPending ? 'Saving...' : 'Save Step'}
+                </button>
+                {Object.keys(fieldErrors).length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={jumpToFirstError}
+                    disabled={!isEditMode}
+                    className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                  >
+                    Jump to Error
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {isEditMode ? (
+              <PetStepper
+                steps={[...STEPS]}
+                currentStep={stepIndex}
+                completedSteps={stepCompletion}
+                onStepClick={jumpToStepWithHighlight}
+              />
+            ) : null}
+
+            {isLoadingProfile ? <p className="text-sm text-neutral-600">Loading profile...</p> : null}
+            {!selectedPet ? <p className="text-sm text-neutral-600">Select a pet to start.</p> : null}
+            {!isEditMode && selectedPet && !isLoadingProfile ? <p className="text-sm text-neutral-600">Click &quot;Edit&quot; to update this pet&apos;s passport information.</p> : null}
+
+            {selectedPet && !isLoadingProfile && isEditMode ? (
+              <div
+                key={`editor-step-${stepIndex}`}
+                ref={editorRef}
+                className="grid gap-4 rounded-2xl border border-neutral-200/60 bg-neutral-50/40 p-4 opacity-100 transition-all duration-150 ease-out sm:grid-cols-2 lg:grid-cols-3"
+              >
+                {stepIndex === 0 ? (
+                  <>
+                    <FormField label="Pet name" disabled={!isEditMode} value={draft.pet.name} onChange={(event) => updatePetField('name', event.target.value)} error={getFieldError('pet.name') ?? undefined} />
+                    <FormField label="Breed" disabled={!isEditMode} value={draft.pet.breed} onChange={(event) => updatePetField('breed', event.target.value)} />
+                    <FormField label="Date of birth" disabled={!isEditMode} type="date" value={draft.pet.dateOfBirth} onChange={(event) => updatePetField('dateOfBirth', event.target.value)} />
+                    <FormField label="Age" type="number" disabled={true} min={0} max={40} value={draft.pet.dateOfBirth ? String(calculateAgeFromDOB(draft.pet.dateOfBirth) ?? '') : ''} onChange={() => {}} />
+                    <FormField label="Weight (kg)" disabled={!isEditMode} type="number" min={0} step={0.1} value={draft.pet.weight} onChange={(event) => updatePetField('weight', event.target.value)} error={getFieldError('pet.weight') ?? undefined} />
+                    <FormField label="Gender" disabled={!isEditMode} value={draft.pet.gender} onChange={(event) => updatePetField('gender', event.target.value)} />
+                    <FormField label="Microchip number" disabled={!isEditMode} value={draft.pet.microchipNumber} onChange={(event) => updatePetField('microchipNumber', event.target.value)} />
+                    <FormField label="Color" disabled={!isEditMode} value={draft.pet.color} onChange={(event) => updatePetField('color', event.target.value)} />
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-neutral-900">Size category</label>
+                      <select
+                        disabled={!isEditMode}
+                        value={draft.pet.sizeCategory}
+                        onChange={(event) => updatePetField('sizeCategory', event.target.value)}
+                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <option value="">Select size</option>
+                        {SIZE_CATEGORY_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{toTitleCaseLabel(option)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-neutral-900">Energy level</label>
+                      <select
+                        disabled={!isEditMode}
+                        value={draft.pet.energyLevel}
+                        onChange={(event) => updatePetField('energyLevel', event.target.value)}
+                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <option value="">Select level</option>
+                        {ENERGY_LEVEL_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{toTitleCaseLabel(option)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <FormField label="Allergies" disabled={!isEditMode} value={draft.pet.allergies} onChange={(event) => updatePetField('allergies', event.target.value)} className="lg:col-span-2" />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.neuteredSpayed} onChange={(event) => updatePetField('neuteredSpayed', event.target.checked)} /> Neutered/Spayed</label>
+                  </>
+                ) : null}
+
+                {stepIndex === 1 ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-neutral-900">Aggression level</label>
+                      <select disabled={!isEditMode} value={draft.pet.aggressionLevel} onChange={(event) => updatePetField('aggressionLevel', event.target.value)} className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed">
+                        <option value="">Select level</option>
+                        {AGGRESSION_OPTIONS.map((option) => (
+                          <option key={option} value={option}>{option.replaceAll('_', ' ')}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <FormField label="Bite incidents count" disabled={!isEditMode} type="number" min={0} value={draft.pet.biteIncidentsCount} onChange={(event) => updatePetField('biteIncidentsCount', event.target.value)} error={getFieldError('pet.biteIncidentsCount') ?? undefined} />
+                    <FormField label="Social with dogs" disabled={!isEditMode} value={draft.pet.socialWithDogs} onChange={(event) => updatePetField('socialWithDogs', event.target.value)} />
+                    <FormField label="Social with cats" disabled={!isEditMode} value={draft.pet.socialWithCats} onChange={(event) => updatePetField('socialWithCats', event.target.value)} />
+                    <FormField label="Social with children" disabled={!isEditMode} value={draft.pet.socialWithChildren} onChange={(event) => updatePetField('socialWithChildren', event.target.value)} />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.isBiteHistory} onChange={(event) => updatePetField('isBiteHistory', event.target.checked)} /> Bite history</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.houseTrained} onChange={(event) => updatePetField('houseTrained', event.target.checked)} /> House trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.leashTrained} onChange={(event) => updatePetField('leashTrained', event.target.checked)} /> Leash trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.crateTrained} onChange={(event) => updatePetField('crateTrained', event.target.checked)} /> Crate trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.separationAnxiety} onChange={(event) => updatePetField('separationAnxiety', event.target.checked)} /> Separation anxiety</label>
+                  </>
+                ) : null}
+
+                {stepIndex === 2 ? (
+                  <div className="space-y-3 sm:col-span-2 lg:col-span-3">
+                    {draft.vaccinations.length === 0 ? (
+                      <EmptyState icon="💉" title="No vaccination records" description="Add the first vaccine record to start tracking due dates." />
+                    ) : null}
+
+                    {draft.vaccinations.map((row, index) => (
+                      <VaccinationCard
+                        key={`${row.id ?? 'new'}-${index}`}
+                        vaccineName={row.vaccineName || 'Untitled vaccine'}
+                        brandName={row.brandName}
+                        administeredDate={row.administeredDate || new Date().toISOString().slice(0, 10)}
+                        nextDueDate={row.nextDueDate || undefined}
+                        status={vaccinationStatus(row.nextDueDate)}
+                        isExpanded={Boolean(expandedVaccinations[index])}
+                        onToggleExpand={() => setExpandedVaccinations((current) => ({ ...current, [index]: !current[index] }))}
+                        onDelete={() => removeVaccinationRow(index)}
+                        onEdit={() => setExpandedVaccinations((current) => ({ ...current, [index]: true }))}
+                      >
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <FormField label="Vaccine name" disabled={!isEditMode} value={row.vaccineName} onChange={(event) => updateVaccinationField(index, 'vaccineName', event.target.value, true)} error={getFieldError(`vaccinations.${index}.vaccineName`) ?? undefined} />
+                          <FormField label="Brand" disabled={!isEditMode} value={row.brandName} onChange={(event) => updateVaccinationField(index, 'brandName', event.target.value, true)} />
+                          <FormField label="Batch" disabled={!isEditMode} value={row.batchNumber} onChange={(event) => updateVaccinationField(index, 'batchNumber', event.target.value, true)} />
+                          <FormField label="Dose number" disabled={!isEditMode} type="number" min={1} value={row.doseNumber} onChange={(event) => updateVaccinationField(index, 'doseNumber', event.target.value)} />
+                          <FormField label="Administered" disabled={!isEditMode} type="date" value={row.administeredDate} onChange={(event) => updateVaccinationField(index, 'administeredDate', event.target.value)} error={getFieldError(`vaccinations.${index}.administeredDate`) ?? undefined} />
+                          <FormField label="Next due" disabled={!isEditMode} type="date" value={row.nextDueDate} onChange={(event) => updateVaccinationField(index, 'nextDueDate', event.target.value)} error={getFieldError(`vaccinations.${index}.nextDueDate`) ?? undefined} />
+                          <FormField label="Veterinarian" disabled={!isEditMode} value={row.veterinarianName} onChange={(event) => updateVaccinationField(index, 'veterinarianName', event.target.value, true)} />
+                          <FormField label="Clinic" disabled={!isEditMode} value={row.clinicName} onChange={(event) => updateVaccinationField(index, 'clinicName', event.target.value, true)} />
+                          <FormField label="Certificate URL" disabled={!isEditMode} value={row.certificateUrl} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, certificateUrl: event.target.value } : item) }))} className="lg:col-span-2" />
+                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={row.reminderEnabled} onChange={(event) => updateVaccinationField(index, 'reminderEnabled', event.target.checked)} /> Reminder enabled</label>
+                          <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { ...row, id: undefined }] }))} className="rounded-xl border border-neutral-200/70 px-3 py-2 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60">Duplicate</button>
+                        </div>
+                      </VaccinationCard>
+                    ))}
+
+                    <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { vaccineName: '', brandName: '', batchNumber: '', doseNumber: '', administeredDate: '', nextDueDate: '', veterinarianName: '', clinicName: '', certificateUrl: '', reminderEnabled: true }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60">Add Vaccination</button>
+                  </div>
+                ) : null}
+
+                {stepIndex === 3 ? (
+                  <div className="space-y-3 sm:col-span-2 lg:col-span-3">
+                    {draft.medicalRecords.length === 0 ? (
+                      <EmptyState icon="🩺" title="No medical records" description="Add a condition record to keep treatment history complete." />
+                    ) : null}
+
+                    {draft.medicalRecords.map((row, index) => (
+                      <MedicalRecordCard
+                        key={`${row.id ?? 'new'}-${index}`}
+                        conditionName={row.conditionName || 'Untitled condition'}
+                        ongoing={row.ongoing}
+                        diagnosisDate={row.diagnosisDate || undefined}
+                        medications={row.medications || undefined}
+                        vetName={row.vetName || undefined}
+                        isExpanded={Boolean(expandedMedicalRecords[index])}
+                        onToggleExpand={() => setExpandedMedicalRecords((current) => ({ ...current, [index]: !current[index] }))}
+                        onDelete={() => removeMedicalRow(index)}
+                        onEdit={() => setExpandedMedicalRecords((current) => ({ ...current, [index]: true }))}
+                      >
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                          <FormField label="Condition name" disabled={!isEditMode} value={row.conditionName} onChange={(event) => updateMedicalField(index, 'conditionName', event.target.value, true)} error={getFieldError(`medicalRecords.${index}.conditionName`) ?? undefined} />
+                          <FormField label="Diagnosis date" disabled={!isEditMode} type="date" value={row.diagnosisDate} onChange={(event) => updateMedicalField(index, 'diagnosisDate', event.target.value)} />
+                          <FormField label="Medications" disabled={!isEditMode} value={row.medications} onChange={(event) => updateMedicalField(index, 'medications', event.target.value, true)} />
+                          <FormField label="Vet name" disabled={!isEditMode} value={row.vetName} onChange={(event) => updateMedicalField(index, 'vetName', event.target.value, true)} />
+                          <FormField label="Special care" disabled={!isEditMode} value={row.specialCareInstructions} onChange={(event) => updateMedicalField(index, 'specialCareInstructions', event.target.value, true)} className="lg:col-span-2" />
+                          <FormField label="Document URL" disabled={!isEditMode} value={row.documentUrl} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, documentUrl: event.target.value } : item) }))} />
+                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={row.ongoing} onChange={(event) => updateMedicalField(index, 'ongoing', event.target.checked)} /> Ongoing condition</label>
+                        </div>
+                      </MedicalRecordCard>
+                    ))}
+
+                    <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, medicalRecords: [...current.medicalRecords, { conditionName: '', diagnosisDate: '', ongoing: false, medications: '', specialCareInstructions: '', vetName: '', documentUrl: '' }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60">Add Medical Record</button>
+                  </div>
+                ) : null}
+
+                {stepIndex === 4 ? (
+                  <>
+                    <FormField label="Food type" disabled={!isEditMode} value={draft.feedingInfo.foodType} onChange={(event) => updateFeedingField('foodType', event.target.value, true)} />
+                    <FormField label="Brand name" disabled={!isEditMode} value={draft.feedingInfo.brandName} onChange={(event) => updateFeedingField('brandName', event.target.value, true)} />
+                    <FormField label="Feeding schedule" disabled={!isEditMode} value={draft.feedingInfo.feedingSchedule} onChange={(event) => updateFeedingField('feedingSchedule', event.target.value, true)} className="lg:col-span-2" />
+                    <FormField label="Food allergies" disabled={!isEditMode} value={draft.feedingInfo.foodAllergies} onChange={(event) => updateFeedingField('foodAllergies', event.target.value, true)} />
+                    <FormField label="Special diet notes" disabled={!isEditMode} value={draft.feedingInfo.specialDietNotes} onChange={(event) => updateFeedingField('specialDietNotes', event.target.value, true)} className="lg:col-span-2" />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.feedingInfo.treatsAllowed} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, treatsAllowed: event.target.checked } }))} /> Treats allowed</label>
+                  </>
+                ) : null}
+
+                {stepIndex === 5 ? (
+                  <>
+                    <FormField label="Coat type" disabled={!isEditMode} value={draft.groomingInfo.coatType} onChange={(event) => updateGroomingField('coatType', event.target.value, true)} />
+                    <FormField label="Grooming frequency" disabled={!isEditMode} value={draft.groomingInfo.groomingFrequency} onChange={(event) => updateGroomingField('groomingFrequency', event.target.value, true)} />
+                    <FormField label="Last grooming" disabled={!isEditMode} type="date" value={draft.groomingInfo.lastGroomingDate} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, lastGroomingDate: event.target.value } }))} />
+                    <FormField label="Nail trim frequency" disabled={!isEditMode} value={draft.groomingInfo.nailTrimFrequency} onChange={(event) => updateGroomingField('nailTrimFrequency', event.target.value, true)} />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.groomingInfo.mattingProne} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, mattingProne: event.target.checked } }))} /> Matting prone</label>
+                  </>
+                ) : null}
+
+                {stepIndex === 6 ? (
+                  <>
+                    <FormField label="Emergency contact name" disabled={!isEditMode} value={draft.emergencyInfo.emergencyContactName} onChange={(event) => updateEmergencyField('emergencyContactName', event.target.value, true)} />
+                    <FormField
+                      label="Emergency contact phone"
+                      disabled={!isEditMode}
+                      value={draft.emergencyInfo.emergencyContactPhone}
+                      onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: event.target.value } }))}
+                      onBlur={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: normalizePhoneInput(event.target.value) } }))}
+                      error={getFieldError('emergencyInfo.emergencyContactPhone') ?? undefined}
+                    />
+                    <FormField label="Preferred vet clinic" disabled={!isEditMode} value={draft.emergencyInfo.preferredVetClinic} onChange={(event) => updateEmergencyField('preferredVetClinic', event.target.value, true)} />
+                    <FormField
+                      label="Preferred vet phone"
+                      disabled={!isEditMode}
+                      value={draft.emergencyInfo.preferredVetPhone}
+                      onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: event.target.value } }))}
+                      onBlur={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: normalizePhoneInput(event.target.value) } }))}
+                      error={getFieldError('emergencyInfo.preferredVetPhone') ?? undefined}
+                    />
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+          </SectionCard>
+
+          <StickyFooter
+            isEnabled={Boolean(selectedPet) && isEditMode}
+            stepNumber={stepIndex + 1}
+            totalSteps={STEPS.length}
+            savingStatus={saveStatus === 'draft-saved' ? 'saved' : saveStatus}
+            draftSaved={saveStatus === 'draft-saved'}
+            isLoading={isPending}
+            onSaveDraft={saveDraftLocally}
+            onPrevious={goToPreviousStepWithAutoDraftSave}
+            onNextOrSave={handleNextOrComplete}
+            isPreviousDisabled={stepIndex === 0}
+            isNextDisabled={false}
+          />
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* View Passport Modal */}
+      <PetPassportViewModal
+        isOpen={showViewModal}
+        onClose={() => setShowViewModal(false)}
+        data={viewModalData}
+        photoUrl={viewModalData ? photoUrls[viewModalData.pet.id] : null}
+        isLoading={isLoadingViewData}
+      />
     </div>
   );
 }

@@ -2,11 +2,16 @@
 
 import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
+import ImageUploadField from '@/components/ui/ImageUploadField';
 import type { ServicePackage, ServiceCategory, PackageComposition } from '@/lib/service-catalog/types';
 
 type PackageBuilderProps = {
   initialPackages: ServicePackage[];
   categories: ServiceCategory[];
+  providers: Array<{
+    id: number;
+    name: string;
+  }>;
 };
 
 type PackageDraft = {
@@ -25,10 +30,13 @@ type PackageDraft = {
   is_active: boolean;
 };
 
-export default function PackageBuilder({ initialPackages, categories }: PackageBuilderProps) {
+export default function PackageBuilder({ initialPackages, categories, providers }: PackageBuilderProps) {
   const [packages, setPackages] = useState<ServicePackage[]>(initialPackages);
   const [selectedPackage, setSelectedPackage] = useState<ServicePackage | null>(null);
   const [composition, setComposition] = useState<PackageComposition | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(
+    providers[0] ? providers[0].id.toString() : ''
+  );
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
   const [packageDraft, setPackageDraft] = useState<PackageDraft>({
@@ -169,13 +177,17 @@ export default function PackageBuilder({ initialPackages, categories }: PackageB
   }
 
   function viewPackageComposition(pkg: ServicePackage) {
+    if (!selectedProviderId) {
+      showToast('Select a provider to preview package composition pricing.', 'error');
+      return;
+    }
+
     setSelectedPackage(pkg);
     setComposition(null);
 
     startTransition(async () => {
       try {
-        // Use a sample provider ID for composition preview
-        const response = await fetch(`/api/services/package/${pkg.id}?providerId=1`);
+        const response = await fetch(`/api/services/package/${pkg.id}?providerId=${encodeURIComponent(selectedProviderId)}`);
         const result = await response.json();
 
         if (!response.ok) {
@@ -204,104 +216,167 @@ export default function PackageBuilder({ initialPackages, categories }: PackageB
           <p className="text-sm font-semibold text-ink">
             {packageDraft.id ? 'Edit Package' : 'Create New Package'}
           </p>
-          <div className="mt-3 grid gap-2">
-            <select
-              value={packageDraft.category_id}
-              onChange={(event) => setPackageDraftField('category_id', event.target.value)}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            >
-              <option value="">Select Category (Optional)</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-            <input
-              value={packageDraft.name}
-              onChange={(event) => setPackageDraftField('name', event.target.value)}
-              placeholder="Package Name (e.g., Premium Grooming)"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={packageDraft.slug}
-              onChange={(event) => setPackageDraftField('slug', event.target.value)}
-              placeholder="Slug (e.g., premium-grooming)"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={packageDraft.short_description}
-              onChange={(event) => setPackageDraftField('short_description', event.target.value)}
-              placeholder="Short Description"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <textarea
-              value={packageDraft.full_description}
-              onChange={(event) => setPackageDraftField('full_description', event.target.value)}
-              placeholder="Full Description"
-              rows={3}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={packageDraft.icon_url}
-              onChange={(event) => setPackageDraftField('icon_url', event.target.value)}
-              placeholder="Icon URL"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={packageDraft.banner_image_url}
-              onChange={(event) => setPackageDraftField('banner_image_url', event.target.value)}
-              placeholder="Banner Image URL"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <div className="grid grid-cols-2 gap-2">
+          <div className="mt-3 space-y-4">
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Category (Optional)</label>
               <select
-                value={packageDraft.discount_type}
-                onChange={(event) =>
-                  setPackageDraftField('discount_type', event.target.value as PackageDraft['discount_type'])
-                }
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+                value={packageDraft.category_id}
+                onChange={(event) => setPackageDraftField('category_id', event.target.value)}
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
               >
-                <option value="">No Discount</option>
-                <option value="percentage">Percentage</option>
-                <option value="fixed">Fixed Amount</option>
+                <option value="">Select Category (Optional)</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
               </select>
-              <input
-                value={packageDraft.discount_value}
-                onChange={(event) => setPackageDraftField('discount_value', event.target.value)}
-                placeholder="Discount Value"
-                type="number"
-                step="0.01"
-                disabled={!packageDraft.discount_type}
-                className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-              />
+              <p className="text-[10px] text-[#6b6b6b]">Group this package under a category for better organization</p>
             </div>
-            <input
-              value={packageDraft.display_order}
-              onChange={(event) => setPackageDraftField('display_order', event.target.value)}
-              placeholder="Display Order (0 = first)"
-              type="number"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <div className="flex flex-wrap gap-3">
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={packageDraft.is_featured}
-                  onChange={(event) =>
-                    setPackageDraftField('is_featured', event.target.checked)
-                  }
-                />
-                Featured
-              </label>
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={packageDraft.is_active}
-                  onChange={(event) => setPackageDraftField('is_active', event.target.checked)}
-                />
-                Active
-              </label>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Package Name *</label>
+              <input
+                value={packageDraft.name}
+                onChange={(event) => setPackageDraftField('name', event.target.value)}
+                placeholder="e.g., Premium Grooming Package"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Name of the service package</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Slug *</label>
+              <input
+                value={packageDraft.slug}
+                onChange={(event) => setPackageDraftField('slug', event.target.value)}
+                placeholder="e.g., premium-grooming (lowercase, hyphens only)"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">URL-friendly identifier (auto-converted to lowercase)</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Short Description</label>
+              <input
+                value={packageDraft.short_description}
+                onChange={(event) => setPackageDraftField('short_description', event.target.value)}
+                placeholder="Brief one-liner for package cards"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Appears on cards and listings</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Full Description</label>
+              <textarea
+                value={packageDraft.full_description}
+                onChange={(event) => setPackageDraftField('full_description', event.target.value)}
+                placeholder="Detailed description of package contents and benefits"
+                rows={3}
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Detailed information shown on package detail pages</p>
+            </div>
+
+            <div className="space-y-2 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-4">
+              <label className="block text-xs font-semibold text-ink">Package Icon</label>
+              <ImageUploadField
+                label=""
+                value={packageDraft.icon_url}
+                onChange={(url) => setPackageDraftField('icon_url', url)}
+                bucket="service-images"
+                placeholder="Upload icon or enter URL"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Square icon (recommended: 200x200px) for package display</p>
+            </div>
+
+            <div className="space-y-2 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-4">
+              <label className="block text-xs font-semibold text-ink">Package Banner</label>
+              <ImageUploadField
+                label=""
+                value={packageDraft.banner_image_url}
+                onChange={(url) => setPackageDraftField('banner_image_url', url)}
+                bucket="service-images"
+                placeholder="Upload banner or enter URL"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Wide image (recommended: 1200x400px) for package header</p>
+            </div>
+
+            <div className="space-y-4 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-4">
+              <div>
+                <p className="font-medium text-ink">Package Discount - Optional</p>
+                <p className="text-xs text-[#6b6b6b]">Offer a discount on this package</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1">Discount Type</label>
+                  <select
+                    value={packageDraft.discount_type}
+                    onChange={(event) =>
+                      setPackageDraftField('discount_type', event.target.value as PackageDraft['discount_type'])
+                    }
+                    className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+                  >
+                    <option value="">No Discount</option>
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="fixed">Fixed Amount (₹)</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-[#6b6b6b]">Type of discount to apply</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink mb-1">Discount Value</label>
+                  <input
+                    value={packageDraft.discount_value}
+                    onChange={(event) => setPackageDraftField('discount_value', event.target.value)}
+                    placeholder={packageDraft.discount_type === 'percentage' ? 'e.g., 15' : 'e.g., 500'}
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    disabled={!packageDraft.discount_type}
+                    className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs disabled:bg-gray-100"
+                  />
+                  <p className="mt-1 text-[10px] text-[#6b6b6b]">{packageDraft.discount_type === 'percentage' ? '0-100%' : 'Amount in ₹'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Display Order</label>
+              <input
+                value={packageDraft.display_order}
+                onChange={(event) => setPackageDraftField('display_order', event.target.value)}
+                placeholder="0 = first"
+                type="number"
+                min="0"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Position in package list (0 = first, lower numbers appear first)</p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-ink">Status & Visibility</p>
+              <div className="flex flex-wrap gap-3">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs hover:bg-[#fff7f0]">
+                  <input
+                    type="checkbox"
+                    checked={packageDraft.is_featured}
+                    onChange={(event) =>
+                      setPackageDraftField('is_featured', event.target.checked)
+                    }
+                  />
+                  <span>Featured</span>
+                </label>
+                <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs hover:bg-[#fff7f0]">
+                  <input
+                    type="checkbox"
+                    checked={packageDraft.is_active}
+                    onChange={(event) => setPackageDraftField('is_active', event.target.checked)}
+                  />
+                  <span>Active</span>
+                </label>
+              </div>
+              <p className="text-[10px] text-[#6b6b6b]">Featured shows prominently · Active makes it visible to users</p>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -327,7 +402,27 @@ export default function PackageBuilder({ initialPackages, categories }: PackageB
         </div>
 
         <div className="mt-4 rounded-xl border border-[#f2dfcf] p-3">
-          <p className="text-xs font-semibold text-ink">Existing Packages</p>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-ink">Existing Packages</p>
+              <p className="text-[10px] text-[#6b6b6b]">Choose provider to preview package pricing and composition.</p>
+            </div>
+            <div className="w-full sm:w-72">
+              <label className="mb-1 block text-[10px] font-semibold text-ink">Preview Provider</label>
+              <select
+                value={selectedProviderId}
+                onChange={(event) => setSelectedProviderId(event.target.value)}
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              >
+                <option value="">Select Provider</option>
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id.toString()}>
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           {packages.length === 0 ? (
             <p className="mt-2 text-xs text-[#6b6b6b]">No packages created yet.</p>
           ) : (

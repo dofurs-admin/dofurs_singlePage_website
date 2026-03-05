@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin-client';
+import { toFriendlyApiError } from '@/lib/api/errors';
 
 const querySchema = z.object({
   query: z.string().trim().min(2).max(120),
@@ -103,7 +104,8 @@ export async function GET(request: Request) {
   ]);
 
   if (publicUsersResult.error) {
-    return NextResponse.json({ error: publicUsersResult.error.message }, { status: 500 });
+    const mapped = toFriendlyApiError(publicUsersResult.error, 'Failed to search users');
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 
   const mergedById = new Map<string, SearchUser>();

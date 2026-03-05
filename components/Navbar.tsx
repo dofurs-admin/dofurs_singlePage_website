@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Menu, X, UserRound, PawPrint, LogOut, Settings } from 'lucide-react';
+import { Menu, X, UserRound, LogOut, Settings } from 'lucide-react';
 import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import { headerPageLinks, navItems } from '@/lib/site-data';
@@ -33,16 +33,30 @@ export default function Navbar() {
 
     let active = true;
 
+    const isInvalidRefreshTokenError = (message?: string) => {
+      if (!message) {
+        return false;
+      }
+
+      const normalized = message.toLowerCase();
+      return normalized.includes('invalid refresh token') || normalized.includes('refresh token not found');
+    };
+
     async function loadCurrentUser() {
       const {
         data: { session },
+        error,
       } = await supabase.auth.getSession();
+
+      if (error && isInvalidRefreshTokenError(error.message)) {
+        await supabase.auth.signOut({ scope: 'local' });
+      }
 
       if (!active) {
         return;
       }
 
-      setAuthUser(session?.user ?? null);
+      setAuthUser(error ? null : session?.user ?? null);
       setIsAuthResolved(true);
     }
 
@@ -157,7 +171,7 @@ export default function Navbar() {
   return (
     <header
       className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-white/90 shadow-soft backdrop-blur-md' : 'bg-transparent'
+        scrolled ? 'border-b border-[#f1e6da] bg-white shadow-soft backdrop-blur-md' : 'border-b border-transparent bg-white/98'
       }`}
     >
       <div className={`${theme.layout.container} flex h-16 items-center justify-between gap-4`}>
@@ -232,14 +246,6 @@ export default function Navbar() {
                   >
                     <UserRound className="h-4 w-4" />
                     Profile
-                  </Link>
-                  <Link
-                    href="/dashboard/user/pets"
-                    className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink transition hover:bg-[#fff7f0]"
-                    onClick={() => setProfileMenuOpen(false)}
-                  >
-                    <PawPrint className="h-4 w-4" />
-                    Pet Profiles
                   </Link>
                   <Link
                     href="/dashboard/user/settings"

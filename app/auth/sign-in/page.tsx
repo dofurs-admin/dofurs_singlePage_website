@@ -314,47 +314,25 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         setError(getReadableAuthError(verifyError.message));
         setFlowState('error');
         showToast('OTP verification failed.', 'error');
+        setIsPending(false);
         return;
       }
 
-      const response = await fetch('/api/auth/bootstrap-profile', {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as {
-          error?: unknown;
-          requiresProfileSetup?: boolean;
-        };
-
-        if (response.status === 409 && payload.requiresProfileSetup) {
-          setNeedsProfileSetup(true);
-          setStep('collect');
-          setFlowState('collecting');
-          setCompleteProfileData((current) => ({
-            ...current,
-            email: normalizedEmail,
-          }));
-          setMessage('OTP verified. Complete your profile to continue.');
-          showToast('Please complete your profile.', 'success');
-          return;
-        }
-
-        setError(normalizeErrorMessage(payload.error));
-        setFlowState('error');
-        showToast('Profile bootstrap failed.', 'error');
-        return;
-      }
-
+      // Set success state - auth listener will handle bootstrap & redirect
       setFlowState('success');
-      router.replace(nextPath);
-      router.refresh();
-      showToast('Signed in successfully.', 'success');
+      showToast('OTP verified successfully.', 'success');
+      
+      // Safety fallback: if redirect doesn't happen in 8 seconds, force it
+      setTimeout(() => {
+        if (window.location.pathname === '/auth/sign-in') {
+          router.replace(nextPath);
+          router.refresh();
+        }
+      }, 8000);
     } catch {
       setError('Unable to verify OTP right now. Please try again.');
       setFlowState('error');
       showToast('OTP verification failed.', 'error');
-    } finally {
       setIsPending(false);
     }
   }
@@ -417,7 +395,6 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
 
       setNeedsProfileSetup(false);
       router.replace(nextPath);
-      router.refresh();
       showToast('Profile completed successfully.', 'success');
     } catch {
       setError('Unable to complete profile right now. Please try again.');
@@ -453,7 +430,17 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
         <p className="mt-2 text-sm text-[#6b6b6b]">Enter your email and we’ll send a secure 6-digit OTP.</p>
         <p className="mt-1 text-xs text-[#8a7b6f]">Flow state: {flowState}</p>
 
-        {needsProfileSetup && (
+        {flowState === 'success' && (
+          <div className="mt-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-center">
+            <p className="text-sm font-semibold text-green-700">✓ Signed in successfully!</p>
+            <p className="mt-1 text-xs text-green-600">Redirecting to your dashboard...</p>
+            <div className="mt-3 flex justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+            </div>
+          </div>
+        )}
+
+        {flowState !== 'success' && needsProfileSetup && (
           <form onSubmit={handleCompleteProfile} className="mt-6 space-y-4">
             <div className="rounded-xl border border-[#f2dfcf] bg-[#fffaf6] px-3 py-2 text-xs text-[#6b6b6b]">
               Complete your profile to finish sign-in.
@@ -571,7 +558,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
           </form>
         )}
 
-        {!needsProfileSetup && step === 'collect' && (
+        {flowState !== 'success' && !needsProfileSetup && step === 'collect' && (
           <form onSubmit={handleSendOtp} className="mt-6 space-y-4">
             <div>
               <label htmlFor="email" className="mb-1 block text-sm font-medium text-ink">
@@ -601,7 +588,7 @@ function SignInFormPanel({ signUpHref }: { signUpHref: string }) {
           </form>
         )}
 
-        {!needsProfileSetup && step === 'verify' && (
+        {flowState !== 'success' && !needsProfileSetup && step === 'verify' && (
           <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
             <div className="rounded-xl border border-[#f2dfcf] bg-[#fffaf6] px-3 py-2 text-xs text-[#6b6b6b]">
               OTP sent to: <span className="font-semibold text-ink">{email}</span>

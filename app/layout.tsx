@@ -21,9 +21,11 @@ export const metadata: Metadata = {
   },
 };
 
+const isDevelopment = process.env.NODE_ENV === 'development';
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <Script src="https://www.googletagmanager.com/gtag/js?id=G-7QBYYFJYHH" strategy="afterInteractive" />
         <Script id="google-analytics" strategy="afterInteractive">
@@ -43,8 +45,73 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             })(window, document, "clarity", "script", "vnhku4n897");
           `}
         </Script>
+        {isDevelopment ? (
+          <Script id="chunk-load-recovery" strategy="afterInteractive">
+            {`
+              (function() {
+                var reloadKey = 'dofurs_chunk_reload_guard';
+                var guardWindowMs = 30000;
+
+                function isChunkLoadMessage(message) {
+                  if (!message) {
+                    return false;
+                  }
+
+                  var normalized = String(message).toLowerCase();
+                  return (
+                    normalized.indexOf('chunkloaderror') !== -1 ||
+                    normalized.indexOf('loading chunk') !== -1 ||
+                    normalized.indexOf('failed to fetch dynamically imported module') !== -1
+                  );
+                }
+
+                function shouldReloadOnce() {
+                  try {
+                    var previous = Number(sessionStorage.getItem(reloadKey) || '0');
+                    var now = Date.now();
+
+                    if (previous && now - previous < guardWindowMs) {
+                      return false;
+                    }
+
+                    sessionStorage.setItem(reloadKey, String(now));
+                    return true;
+                  } catch (_error) {
+                    return true;
+                  }
+                }
+
+                function attemptRecovery(message) {
+                  if (!isChunkLoadMessage(message)) {
+                    return;
+                  }
+
+                  if (!shouldReloadOnce()) {
+                    return;
+                  }
+
+                  window.location.reload();
+                }
+
+                window.addEventListener('error', function(event) {
+                  var nestedMessage = event && event.error && event.error.message;
+                  attemptRecovery((event && event.message) || nestedMessage || '');
+                });
+
+                window.addEventListener('unhandledrejection', function(event) {
+                  var reason = event && event.reason;
+                  var reasonMessage =
+                    (reason && reason.message) ||
+                    (typeof reason === 'string' ? reason : '');
+
+                  attemptRecovery(reasonMessage);
+                });
+              })();
+            `}
+          </Script>
+        ) : null}
       </head>
-      <body>
+      <body suppressHydrationWarning>
         <AppProviders>
           {children}
           <WhatsAppFloatingButton />

@@ -1,13 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { PricingBreakdown } from '../types';
 import { applyDiscount } from './discountEngine';
 
-export type PriceBreakdown = {
-  basePrice: number;
-  addOnPrice: number;
-  discountAmount: number;
-  finalPrice: number;
-  breakdown: string[];
-};
+export type PriceBreakdown = PricingBreakdown;
 
 export async function calculateBookingPriceWithSupabase(
   supabase: SupabaseClient,
@@ -18,7 +13,7 @@ export async function calculateBookingPriceWithSupabase(
     packageId?: string;
     addOns?: Array<{ id: string; quantity: number }>;
   },
-): Promise<PriceBreakdown> {
+): Promise<PricingBreakdown> {
   const breakdown: string[] = [];
   let basePrice = 0;
   let addOnPrice = 0;
@@ -106,10 +101,10 @@ export async function calculateBookingPriceWithSupabase(
   }
 
   return {
-    basePrice,
-    addOnPrice,
-    discountAmount,
-    finalPrice: applyDiscount(basePrice + addOnPrice, discountAmount),
+    base_total: basePrice,
+    addon_total: addOnPrice,
+    discount_amount: discountAmount,
+    final_total: applyDiscount(basePrice + addOnPrice, discountAmount),
     breakdown,
   };
 }

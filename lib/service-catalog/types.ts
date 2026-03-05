@@ -42,7 +42,7 @@ export type ServiceMode = "home_visit" | "clinic_visit" | "teleconsult";
 
 export interface Service {
   id: string;
-  provider_id: string | bigint;
+  provider_id?: string | bigint | null;
   category_id?: string | null;
   service_type: string;
   slug?: string | null;

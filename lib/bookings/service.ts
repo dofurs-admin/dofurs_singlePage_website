@@ -1,9 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getProviderIdByUserId } from '@/lib/provider-management/api';
+import type { BookingActorRole } from './state-transition-guard';
 import { reverseDiscountRedemptionForBooking } from './discounts';
-import { resolveAvailableSlots } from './engines/slotEngine';
+import {
+  resolveAvailableSlots,
+  resolveDayAvailability,
+  resolveAvailableSlotsMultiDay,
+} from './engines/slotEngine';
 import { assertBookingStateTransition } from './state-transition-guard';
 import type {
+  BookingCreationResponse,
   BookingRecord,
   BookingStatus,
   CreateBookingInput,
@@ -15,12 +21,183 @@ import type {
 const BOOKING_SELECT =
   'id, user_id, pet_id, provider_id, provider_service_id, service_type, booking_date, start_time, end_time, booking_mode, location_address, latitude, longitude, booking_status, cancellation_reason, cancellation_by, price_at_booking, admin_price_reference, provider_notes, internal_notes, payment_mode, platform_fee, provider_payout_status, created_at, updated_at';
 
-function assertProviderTransition(current: BookingStatus, next: BookingStatus) {
-  assertBookingStateTransition(current, next);
+type BookingTransitionActorContext = {
+  actorId?: string;
+  actorRole?: BookingActorRole;
+  source?: string;
+};
+
+type ApplyBookingStatusTransitionInput = BookingTransitionActorContext & {
+  expectedUserId?: string;
+  expectedProviderId?: number;
+  nextStatus: BookingStatus;
+  cancellationBy?: 'user' | 'provider' | 'admin';
+  cancellationReason?: string | null;
+  providerNotes?: string | null;
+};
+
+async function getCurrentBookingStatus(supabase: SupabaseClient, bookingId: number) {
+  const { data: currentBooking, error: currentBookingError } = await supabase
+    .from('bookings')
+    .select('id, booking_status')
+    .eq('id', bookingId)
+    .single<{ id: number; booking_status: BookingStatus }>();
+
+  if (currentBookingError || !currentBooking) {
+    throw currentBookingError ?? new Error('Booking not found');
+  }
+
+  return currentBooking.booking_status;
+}
+
+async function logBookingTransitionAuditEvent(
+  supabase: SupabaseClient,
+  bookingId: number,
+  currentStatus: BookingStatus,
+  nextStatus: BookingStatus,
+  context?: BookingTransitionActorContext & { cancellationBy?: 'user' | 'provider' | 'admin'; cancellationReason?: string | null },
+) {
+  const eventPayload = {
+    booking_id: bookingId,
+    actor_id: context?.actorId ?? null,
+    actor_role: context?.actorRole ?? null,
+    from_status: currentStatus,
+    to_status: nextStatus,
+    cancellation_by: context?.cancellationBy ?? null,
+    reason: context?.cancellationReason ?? null,
+    source: context?.source ?? 'booking_service',
+    metadata: {
+      event_type: 'booking_status_transition',
+      from_status: currentStatus,
+      to_status: nextStatus,
+      actor_role: context?.actorRole ?? null,
+      cancellation_by: context?.cancellationBy ?? null,
+      source: context?.source ?? 'booking_service',
+    },
+  };
+
+  const { error: transitionError } = await supabase.from('booking_status_transition_events').insert(eventPayload);
+
+  if (!transitionError) {
+    return;
+  }
+
+  if (transitionError.code !== '42P01') {
+    if (transitionError.code === '42501') {
+      return;
+    }
+
+    throw transitionError;
+  }
+
+  const { error: legacyError } = await supabase.from('booking_adjustment_events').insert({
+    booking_id: bookingId,
+    actor_id: context?.actorId ?? null,
+    adjustment_amount: null,
+    adjustment_type: 'status_transition',
+    reason: context?.cancellationReason ?? null,
+    metadata: {
+      event_type: 'booking_status_transition',
+      from_status: currentStatus,
+      to_status: nextStatus,
+      actor_role: context?.actorRole ?? null,
+      cancellation_by: context?.cancellationBy ?? null,
+      source: context?.source ?? 'booking_service',
+    },
+  });
+
+  if (!legacyError) {
+    return;
+  }
+
+  if (legacyError.code === '42P01' || legacyError.code === '42501') {
+    return;
+  }
+
+  throw legacyError;
+}
+
+async function applyBookingStatusTransition(
+  supabase: SupabaseClient,
+  bookingId: number,
+  input: ApplyBookingStatusTransitionInput,
+) {
+  let existingQuery = supabase.from('bookings').select('id, user_id, provider_id, booking_status').eq('id', bookingId);
+
+  if (input.expectedUserId) {
+    existingQuery = existingQuery.eq('user_id', input.expectedUserId);
+  }
+
+  if (input.expectedProviderId) {
+    existingQuery = existingQuery.eq('provider_id', input.expectedProviderId);
+  }
+
+  const { data: existing, error: existingError } = await existingQuery.single<{
+    id: number;
+    user_id: string;
+    provider_id: number;
+    booking_status: BookingStatus;
+  }>();
+
+  if (existingError || !existing) {
+    throw existingError ?? new Error('Booking not found');
+  }
+
+  assertBookingStateTransition(existing.booking_status, input.nextStatus);
+
+  const updatePayload: {
+    booking_status: BookingStatus;
+    status: BookingStatus;
+    cancellation_by: 'user' | 'provider' | 'admin' | null;
+    cancellation_reason: string | null;
+    provider_notes?: string | null;
+  } = {
+    booking_status: input.nextStatus,
+    status: input.nextStatus,
+    cancellation_by: input.nextStatus === 'cancelled' ? input.cancellationBy ?? null : null,
+    cancellation_reason: input.nextStatus === 'cancelled' ? input.cancellationReason ?? null : null,
+  };
+
+  if (input.providerNotes !== undefined) {
+    updatePayload.provider_notes = input.providerNotes;
+  }
+
+  let updateQuery = supabase.from('bookings').update(updatePayload).eq('id', bookingId);
+
+  if (input.expectedUserId) {
+    updateQuery = updateQuery.eq('user_id', input.expectedUserId);
+  }
+
+  if (input.expectedProviderId) {
+    updateQuery = updateQuery.eq('provider_id', input.expectedProviderId);
+  }
+
+  const { data, error } = await updateQuery.select(BOOKING_SELECT).single<BookingRecord>();
+
+  if (error) {
+    throw error;
+  }
+
+  await logBookingTransitionAuditEvent(supabase, bookingId, existing.booking_status, input.nextStatus, {
+    actorId: input.actorId,
+    actorRole: input.actorRole,
+    source: input.source,
+    cancellationBy: input.nextStatus === 'cancelled' ? input.cancellationBy : undefined,
+    cancellationReason: input.nextStatus === 'cancelled' ? input.cancellationReason : undefined,
+  });
+
+  if (input.nextStatus === 'cancelled') {
+    await reverseDiscountRedemptionForBooking(
+      bookingId,
+      input.cancellationReason ?? `${input.cancellationBy ?? 'admin'}_cancelled_booking`,
+    );
+  }
+
+  return data;
 }
 
 export async function createBooking(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
-  const { data, error } = await supabase.rpc('create_booking_transactional_v1', {
+  const { data, error } = await supabase.rpc('create_booking_atomic', {
     p_user_id: userId,
     p_pet_id: input.petId,
     p_provider_id: input.providerId,
@@ -45,7 +222,23 @@ export async function createBooking(supabase: SupabaseClient, userId: string, in
     throw error;
   }
 
-  return data as BookingRecord;
+  const response = data as BookingCreationResponse;
+
+  if (!response.success) {
+    throw new Error(`${response.error_code}:${response.error_message}`);
+  }
+
+  const { data: booking, error: bookingError } = await supabase
+    .from('bookings')
+    .select(BOOKING_SELECT)
+    .eq('id', response.booking_id)
+    .single<BookingRecord>();
+
+  if (bookingError || !booking) {
+    throw bookingError ?? new Error('Booking created but could not be retrieved');
+  }
+
+  return booking;
 }
 
 export async function getMyBookings(supabase: SupabaseClient, userId: string) {
@@ -63,31 +256,47 @@ export async function getMyBookings(supabase: SupabaseClient, userId: string) {
   return (data ?? []) as BookingRecord[];
 }
 
-export async function cancelBooking(supabase: SupabaseClient, userId: string, bookingId: number, cancellationReason?: string) {
-  const { data, error } = await supabase
-    .from('bookings')
-    .update({
-      booking_status: 'cancelled',
-      status: 'cancelled',
-      cancellation_by: 'user',
-      cancellation_reason: cancellationReason ?? null,
-    })
-    .eq('id', bookingId)
-    .eq('user_id', userId)
-    .select(BOOKING_SELECT)
-    .single<BookingRecord>();
-
-  if (error) {
-    throw error;
-  }
-
-  await reverseDiscountRedemptionForBooking(bookingId, cancellationReason ?? 'cancelled_by_user');
-
-  return data;
+export async function cancelBooking(
+  supabase: SupabaseClient,
+  userId: string,
+  bookingId: number,
+  cancellationReason?: string,
+  context?: BookingTransitionActorContext,
+) {
+  return applyBookingStatusTransition(supabase, bookingId, {
+    expectedUserId: userId,
+    nextStatus: 'cancelled',
+    cancellationBy: 'user',
+    cancellationReason,
+    actorId: context?.actorId ?? userId,
+    actorRole: context?.actorRole ?? 'user',
+    source: context?.source ?? 'cancelBooking',
+  });
 }
 
 export async function getAvailableSlots(supabase: SupabaseClient, input: GetAvailableSlotsInput) {
   return resolveAvailableSlots(supabase, input);
+}
+
+export async function getDayAvailability(
+  supabase: SupabaseClient,
+  providerId: number,
+  bookingDate: string,
+  serviceDurationMinutes?: number,
+) {
+  return resolveDayAvailability(supabase, providerId, bookingDate, serviceDurationMinutes);
+}
+
+export async function getAvailableSlotsMultiDay(
+  supabase: SupabaseClient,
+  input: {
+    providerId: number;
+    fromDate: string;
+    toDate: string;
+    serviceDurationMinutes?: number;
+  },
+) {
+  return resolveAvailableSlotsMultiDay(supabase, input);
 }
 
 export async function getProviderBookings(supabase: SupabaseClient, providerUserId: string, query: ProviderBookingsQuery = {}) {
@@ -139,41 +348,15 @@ async function providerUpdateBookingStatus(
     throw new Error('Provider profile is not linked to this account.');
   }
 
-  const { data: existing, error: existingError } = await supabase
-    .from('bookings')
-    .select('id, provider_id, booking_status')
-    .eq('id', bookingId)
-    .eq('provider_id', providerId)
-    .single<{ id: number; provider_id: number; booking_status: BookingStatus }>();
-
-  if (existingError || !existing) {
-    throw existingError ?? new Error('Booking not found');
-  }
-
-  assertProviderTransition(existing.booking_status, nextStatus);
-
-  const { data, error } = await supabase
-    .from('bookings')
-    .update({
-      booking_status: nextStatus,
-      status: nextStatus,
-      cancellation_by: nextStatus === 'cancelled' ? 'provider' : null,
-      provider_notes: providerNotes ?? null,
-    })
-    .eq('id', bookingId)
-    .eq('provider_id', providerId)
-    .select(BOOKING_SELECT)
-    .single<BookingRecord>();
-
-  if (error) {
-    throw error;
-  }
-
-  if (nextStatus === 'cancelled') {
-    await reverseDiscountRedemptionForBooking(bookingId, 'cancelled_by_provider');
-  }
-
-  return data;
+  return applyBookingStatusTransition(supabase, bookingId, {
+    expectedProviderId: providerId,
+    nextStatus,
+    cancellationBy: nextStatus === 'cancelled' ? 'provider' : undefined,
+    providerNotes: providerNotes ?? null,
+    actorId: providerUserId,
+    actorRole: 'provider',
+    source: 'providerUpdateBookingStatus',
+  });
 }
 
 export async function confirmBooking(supabase: SupabaseClient, providerUserId: string, bookingId: number, providerNotes?: string) {
@@ -188,48 +371,64 @@ export async function markNoShow(supabase: SupabaseClient, providerUserId: strin
   return providerUpdateBookingStatus(supabase, providerUserId, bookingId, 'no_show', providerNotes);
 }
 
+export async function cancelBookingAsProvider(
+  supabase: SupabaseClient,
+  providerUserId: string,
+  bookingId: number,
+  cancellationReason?: string,
+  providerNotes?: string,
+) {
+  const providerId = await getProviderIdByUserId(supabase, providerUserId);
+
+  if (!providerId) {
+    throw new Error('Provider profile is not linked to this account.');
+  }
+
+  return applyBookingStatusTransition(supabase, bookingId, {
+    expectedProviderId: providerId,
+    nextStatus: 'cancelled',
+    cancellationBy: 'provider',
+    cancellationReason,
+    providerNotes: providerNotes ?? null,
+    actorId: providerUserId,
+    actorRole: 'provider',
+    source: 'cancelBookingAsProvider',
+  });
+}
+
 export async function updateBookingStatus(
   supabase: SupabaseClient,
   bookingId: number,
   nextStatus: BookingStatus,
-  options?: { cancellationBy?: 'user' | 'provider' | 'admin'; cancellationReason?: string | null },
+  options?: {
+    cancellationBy?: 'user' | 'provider' | 'admin';
+    cancellationReason?: string | null;
+    actorId?: string;
+    actorRole?: BookingActorRole;
+    source?: string;
+  },
 ) {
-  const { data: currentBooking, error: currentBookingError } = await supabase
-    .from('bookings')
-    .select('id, booking_status')
-    .eq('id', bookingId)
-    .single<{ id: number; booking_status: BookingStatus }>();
-
-  if (currentBookingError || !currentBooking) {
-    throw currentBookingError ?? new Error('Booking not found');
-  }
-
-  assertBookingStateTransition(currentBooking.booking_status, nextStatus);
-
-  const { data, error } = await supabase
-    .from('bookings')
-    .update({
-      booking_status: nextStatus,
-      status: nextStatus,
-      cancellation_by: nextStatus === 'cancelled' ? options?.cancellationBy ?? 'admin' : null,
-      cancellation_reason: nextStatus === 'cancelled' ? options?.cancellationReason ?? null : null,
-    })
-    .eq('id', bookingId)
-    .select(BOOKING_SELECT)
-    .single<BookingRecord>();
-
-  if (error) {
-    throw error;
-  }
-
-  if (nextStatus === 'cancelled') {
-    await reverseDiscountRedemptionForBooking(bookingId, options?.cancellationReason ?? 'cancelled_by_admin_or_provider');
-  }
-
-  return data;
+  return applyBookingStatusTransition(supabase, bookingId, {
+    nextStatus,
+    cancellationBy: nextStatus === 'cancelled' ? options?.cancellationBy ?? 'admin' : undefined,
+    cancellationReason: nextStatus === 'cancelled' ? options?.cancellationReason ?? null : undefined,
+    actorId: options?.actorId,
+    actorRole: options?.actorRole,
+    source: options?.source ?? 'updateBookingStatus',
+  });
 }
 
 export async function overrideBooking(supabase: SupabaseClient, bookingId: number, patch: OverrideBookingInput) {
+  if (patch.bookingStatus) {
+    await applyBookingStatusTransition(supabase, bookingId, {
+      nextStatus: patch.bookingStatus,
+      cancellationBy: patch.bookingStatus === 'cancelled' ? patch.cancellationBy ?? 'admin' : undefined,
+      cancellationReason: patch.bookingStatus === 'cancelled' ? patch.cancellationReason ?? null : undefined,
+      providerNotes: patch.providerNotes,
+      source: 'overrideBooking',
+    });
+  }
+
   const updatePayload = {
     booking_date: patch.bookingDate,
     start_time: patch.startTime,
@@ -259,10 +458,6 @@ export async function overrideBooking(supabase: SupabaseClient, bookingId: numbe
     throw error;
   }
 
-  if (patch.bookingStatus === 'cancelled') {
-    await reverseDiscountRedemptionForBooking(bookingId, patch.cancellationReason ?? 'cancelled_via_override');
-  }
-
   return data;
 }
 
@@ -272,6 +467,9 @@ export async function manualAssignProvider(
   providerId: number,
   providerServiceId: string,
 ) {
+  const currentStatus = await getCurrentBookingStatus(supabase, bookingId);
+  assertBookingStateTransition(currentStatus, 'pending');
+
   const { data: providerService, error: providerServiceError } = await supabase
     .from('provider_services')
     .select('id, provider_id, service_type')
@@ -317,6 +515,9 @@ export async function processAdminCancellationAdjustment(
   const booking = await updateBookingStatus(supabase, bookingId, 'cancelled', {
     cancellationBy: 'admin',
     cancellationReason: input?.reason ?? 'Cancelled by admin',
+    actorId,
+    actorRole: 'admin',
+    source: 'processAdminCancellationAdjustment',
   });
 
   await reverseDiscountRedemptionForBooking(bookingId, input?.reason ?? 'cancelled_by_admin');

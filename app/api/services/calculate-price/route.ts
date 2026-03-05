@@ -14,10 +14,10 @@
  * Response:
  * - success: boolean
  * - data: {
- *     basePrice: number
- *     addOnPrice: number
- *     discountAmount: number
- *     finalPrice: number
+ *     base_total: number
+ *     addon_total: number
+ *     discount_amount: number
+ *     final_total: number
  *     breakdown: string[]
  *   }
  * - error: string (on failure)

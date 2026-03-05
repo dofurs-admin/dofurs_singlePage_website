@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
+import { ADMIN_ROLES, requireApiRole } from '@/lib/auth/api-auth';
 import { processAdminCancellationAdjustment } from '@/lib/bookings/service';
+import { toFriendlyApiError } from '@/lib/api/errors';
+import { logSecurityEvent } from '@/lib/monitoring/security-log';
 
 const payloadSchema = z.object({
   reason: z.string().trim().max(2000).optional(),
@@ -9,15 +11,13 @@ const payloadSchema = z.object({
 });
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const { role, user, supabase } = await getApiAuthContext();
+  const auth = await requireApiRole(ADMIN_ROLES);
 
-  if (!user) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
 
-  if (role !== 'admin' && role !== 'staff') {
-    return forbidden();
-  }
+  const { role, user, supabase } = auth.context;
 
   const { id } = await context.params;
   const bookingId = Number(id);
@@ -39,9 +39,31 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       metadata: parsed.data.metadata,
     });
 
+    logSecurityEvent('info', 'admin.action', {
+      route: 'api/admin/bookings/[id]/adjustment',
+      actorId: user.id,
+      actorRole: role,
+      targetId: bookingId,
+      metadata: {
+        action: 'booking_adjustment',
+      },
+    });
+
     return NextResponse.json({ success: true, booking });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to process booking adjustment';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to process booking adjustment');
+
+    logSecurityEvent('error', 'booking.failure', {
+      route: 'api/admin/bookings/[id]/adjustment',
+      actorId: user.id,
+      actorRole: role,
+      targetId: bookingId,
+      message: error instanceof Error ? error.message : String(error),
+      metadata: {
+        responseStatus: mapped.status,
+      },
+    });
+
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

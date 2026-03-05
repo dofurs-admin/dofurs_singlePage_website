@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
+import ImageUploadField from '@/components/ui/ImageUploadField';
 import type { ServiceCategory } from '@/lib/service-catalog/types';
 
 type ServiceCategoriesManagerProps = {
@@ -158,66 +159,103 @@ export default function ServiceCategoriesManager({ initialCategories }: ServiceC
           <p className="text-sm font-semibold text-ink">
             {categoryDraft.id ? 'Edit Category' : 'Create New Category'}
           </p>
-          <div className="mt-3 grid gap-2">
-            <input
-              value={categoryDraft.name}
-              onChange={(event) => setCategoryDraftField('name', event.target.value)}
-              placeholder="Category Name (e.g., Grooming)"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={categoryDraft.slug}
-              onChange={(event) => setCategoryDraftField('slug', event.target.value)}
-              placeholder="Slug (e.g., grooming)"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <textarea
-              value={categoryDraft.description}
-              onChange={(event) => setCategoryDraftField('description', event.target.value)}
-              placeholder="Description"
-              rows={2}
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={categoryDraft.icon_url}
-              onChange={(event) => setCategoryDraftField('icon_url', event.target.value)}
-              placeholder="Icon URL"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={categoryDraft.banner_image_url}
-              onChange={(event) => setCategoryDraftField('banner_image_url', event.target.value)}
-              placeholder="Banner Image URL"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <input
-              value={categoryDraft.display_order}
-              onChange={(event) => setCategoryDraftField('display_order', event.target.value)}
-              placeholder="Display Order (0 = first)"
-              type="number"
-              className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
-            />
-            <div className="flex flex-wrap gap-3">
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={categoryDraft.is_featured}
-                  onChange={(event) =>
-                    setCategoryDraftField('is_featured', event.target.checked)
-                  }
-                />
-                Featured
-              </label>
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={categoryDraft.is_active}
-                  onChange={(event) =>
-                    setCategoryDraftField('is_active', event.target.checked)
-                  }
-                />
-                Active
-              </label>
+          <div className="mt-3 space-y-4">
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Category Name *</label>
+              <input
+                value={categoryDraft.name}
+                onChange={(event) => setCategoryDraftField('name', event.target.value)}
+                placeholder="e.g., Grooming, Veterinary, Training"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Display name for this category</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Slug *</label>
+              <input
+                value={categoryDraft.slug}
+                onChange={(event) => setCategoryDraftField('slug', event.target.value)}
+                placeholder="e.g., grooming (lowercase, hyphens only)"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">URL-friendly identifier (auto-converted to lowercase)</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Description</label>
+              <textarea
+                value={categoryDraft.description}
+                onChange={(event) => setCategoryDraftField('description', event.target.value)}
+                placeholder="Brief description of this category for users"
+                rows={2}
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Optional: Helps users understand what&apos;s in this category</p>
+            </div>
+
+            <div className="space-y-2 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-4">
+              <label className="block text-xs font-semibold text-ink">Category Icon</label>
+              <ImageUploadField
+                label=""
+                value={categoryDraft.icon_url}
+                onChange={(url) => setCategoryDraftField('icon_url', url)}
+                bucket="service-images"
+                placeholder="Upload icon or enter URL"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Square image (recommended: 200x200px) for category display</p>
+            </div>
+
+            <div className="space-y-2 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-4">
+              <label className="block text-xs font-semibold text-ink">Banner Image</label>
+              <ImageUploadField
+                label=""
+                value={categoryDraft.banner_image_url}
+                onChange={(url) => setCategoryDraftField('banner_image_url', url)}
+                bucket="service-images"
+                placeholder="Upload banner or enter URL"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Wide image (recommended: 1200x400px) for category header</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-ink">Display Order</label>
+              <input
+                value={categoryDraft.display_order}
+                onChange={(event) => setCategoryDraftField('display_order', event.target.value)}
+                placeholder="0 = first"
+                type="number"
+                min="0"
+                className="w-full rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
+              />
+              <p className="text-[10px] text-[#6b6b6b]">Position in category list (0 = first, lower numbers appear first)</p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-ink">Status & Visibility</p>
+              <div className="flex flex-wrap gap-3">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs hover:bg-[#fff7f0]">
+                  <input
+                    type="checkbox"
+                    checked={categoryDraft.is_featured}
+                    onChange={(event) =>
+                      setCategoryDraftField('is_featured', event.target.checked)
+                    }
+                  />
+                  <span>Featured</span>
+                </label>
+                <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs hover:bg-[#fff7f0]">
+                  <input
+                    type="checkbox"
+                    checked={categoryDraft.is_active}
+                    onChange={(event) =>
+                      setCategoryDraftField('is_active', event.target.checked)
+                    }
+                  />
+                  <span>Active</span>
+                </label>
+              </div>
+              <p className="text-[10px] text-[#6b6b6b]">Featured shows prominently · Active makes it visible to users</p>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">

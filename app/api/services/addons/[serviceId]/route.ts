@@ -10,7 +10,13 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from 'zod';
 import type { ServiceAddon } from "@/lib/service-catalog/types";
+import { toFriendlyApiError } from '@/lib/api/errors';
+
+const addOnsParamsSchema = z.object({
+  serviceId: z.string().uuid(),
+});
 
 export async function GET(
   request: NextRequest,
@@ -18,6 +24,15 @@ export async function GET(
 ) {
   try {
     const { serviceId } = await context.params;
+    const parsed = addOnsParamsSchema.safeParse({ serviceId });
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid request parameters', details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -26,14 +41,15 @@ export async function GET(
     const { data, error } = await supabase
       .from("service_addons")
       .select("*")
-      .eq("provider_service_id", serviceId)
+      .eq("provider_service_id", parsed.data.serviceId)
       .eq("is_active", true)
       .order("display_order", { ascending: true });
 
     if (error) {
+      const mapped = toFriendlyApiError(error, 'Failed to load service add-ons');
       return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 }
+        { success: false, error: mapped.message },
+        { status: mapped.status }
       );
     }
 
@@ -42,12 +58,13 @@ export async function GET(
       data: data as ServiceAddon[],
     });
   } catch (error) {
+    const mapped = toFriendlyApiError(error, 'Failed to load service add-ons');
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: mapped.message,
       },
-      { status: 500 }
+      { status: mapped.status }
     );
   }
 }

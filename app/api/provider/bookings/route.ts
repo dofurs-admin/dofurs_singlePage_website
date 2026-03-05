@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { forbidden, getApiAuthContext, unauthorized } from '@/lib/auth/api-auth';
+import { requireApiRole } from '@/lib/auth/api-auth';
 import { getProviderBookings } from '@/lib/bookings/service';
+import {
+  ensureProviderCompletionTasks,
+  getCompletionTaskMapForBookings,
+} from '@/lib/bookings/completion-tasks';
+import { toFriendlyApiError } from '@/lib/api/errors';
+import { logSecurityEvent } from '@/lib/monitoring/security-log';
+import { getProviderIdByUserId } from '@/lib/provider-management/api';
 
 const querySchema = z.object({
   status: z.enum(['pending', 'confirmed', 'completed', 'cancelled', 'no_show']).optional(),
@@ -11,15 +18,13 @@ const querySchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const { user, role, supabase } = await getApiAuthContext();
+  const auth = await requireApiRole(['provider']);
 
-  if (!user) {
-    return unauthorized();
+  if (auth.response) {
+    return auth.response;
   }
 
-  if (role !== 'provider' && role !== 'admin' && role !== 'staff') {
-    return forbidden();
-  }
+  const { user, role, supabase } = auth.context;
 
   const { searchParams } = new URL(request.url);
   const parsed = querySchema.safeParse({
@@ -34,10 +39,45 @@ export async function GET(request: Request) {
   }
 
   try {
+    const providerId = await getProviderIdByUserId(supabase, user.id);
+
+    if (providerId) {
+      await ensureProviderCompletionTasks(supabase, providerId);
+    }
+
     const bookings = await getProviderBookings(supabase, user.id, parsed.data);
-    return NextResponse.json({ bookings });
+    const taskMap = await getCompletionTaskMapForBookings(
+      supabase,
+      bookings.map((booking) => booking.id),
+    );
+
+    const bookingsWithTasks = bookings.map((booking) => {
+      const task = taskMap.get(booking.id);
+
+      return {
+        ...booking,
+        completion_task_status: task?.task_status ?? null,
+        completion_due_at: task?.due_at ?? null,
+        completion_completed_at: task?.completed_at ?? null,
+        completion_feedback_text: task?.feedback_text ?? null,
+        requires_completion_feedback: booking.booking_status === 'confirmed' && task?.task_status === 'pending',
+      };
+    });
+
+    return NextResponse.json({ bookings: bookingsWithTasks });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to load provider bookings';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const mapped = toFriendlyApiError(error, 'Unable to load provider bookings');
+
+    logSecurityEvent('error', 'booking.failure', {
+      route: 'api/provider/bookings',
+      actorId: user.id,
+      actorRole: role,
+      message: error instanceof Error ? error.message : String(error),
+      metadata: {
+        status: mapped.status,
+      },
+    });
+
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }

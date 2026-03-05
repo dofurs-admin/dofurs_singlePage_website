@@ -113,8 +113,8 @@ export default function UserSettingsClient({ initialProfile }: { initialProfile:
           const upload = await uploadCompressedImage(profilePhotoFile, 'user-photos');
           uploadedPhotoPath = upload.path;
           setProfilePhotoPreview(upload.signedUrl);
-        } catch {
-          showToast('Profile photo upload failed.', 'error');
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Profile photo upload failed.', 'error');
           return;
         }
       }

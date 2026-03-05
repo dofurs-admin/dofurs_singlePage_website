@@ -61,6 +61,19 @@ type BookingCreateResponse = {
   success: boolean;
   booking: { id: number };
 };
+type SavedAddress = {
+  id: string;
+  label: 'Home' | 'Office' | 'Other' | null;
+  address_line_1: string;
+  address_line_2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+  is_default: boolean;
+};
 type BookingCreatePayload = {
   petId: number;
   providerId: number;
@@ -104,6 +117,8 @@ export default function PremiumUserBookingFlow() {
   const [locationAddress, setLocationAddress] = useState('');
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [selectedSavedAddressId, setSelectedSavedAddressId] = useState<string | null>(null);
   const [providerNotes, setProviderNotes] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -145,6 +160,7 @@ export default function PremiumUserBookingFlow() {
           providers: Provider[];
           services: Service[];
           pets: Pet[];
+          addresses?: SavedAddress[];
           discounts?: CatalogDiscount[];
         }>('/api/bookings/catalog');
 
@@ -153,6 +169,7 @@ export default function PremiumUserBookingFlow() {
         setProviders(payload.providers);
         setServices(payload.services);
         setPets(payload.pets);
+        setSavedAddresses(payload.addresses ?? []);
         setDiscounts(payload.discounts ?? []);
 
         // Preselect defaults
@@ -168,10 +185,29 @@ export default function PremiumUserBookingFlow() {
         // Preselect default booking mode
         setBookingMode('home_visit');
 
-        // Load last address
-        const lastAddress = globalThis.localStorage?.getItem('booking.lastUsedAddress');
-        if (lastAddress) {
-          setLocationAddress(lastAddress);
+        const defaultAddress = (payload.addresses ?? []).find((item) => item.is_default) ?? (payload.addresses ?? [])[0];
+        if (defaultAddress) {
+          const formattedAddress = [
+            defaultAddress.address_line_1,
+            defaultAddress.address_line_2,
+            defaultAddress.city,
+            defaultAddress.state,
+            defaultAddress.pincode,
+            defaultAddress.country,
+          ]
+            .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            .join(', ');
+          setLocationAddress(formattedAddress);
+          setSelectedSavedAddressId(defaultAddress.id);
+          if (defaultAddress.latitude !== null && defaultAddress.longitude !== null) {
+            setLatitude(String(defaultAddress.latitude));
+            setLongitude(String(defaultAddress.longitude));
+          }
+        } else {
+          const lastAddress = globalThis.localStorage?.getItem('booking.lastUsedAddress');
+          if (lastAddress) {
+            setLocationAddress(lastAddress);
+          }
         }
       } catch {
         if (isMounted) {
@@ -289,22 +325,37 @@ export default function PremiumUserBookingFlow() {
   useEffect(() => {
     if (!bookingDate || !providerId) {
       setSlots([]);
+      setSlotStartTime('');
       return;
     }
 
     let isMounted = true;
 
     async function loadSlots() {
+      const selectedService = services.find((service) => service.id === serviceId);
+      const search = new URLSearchParams({
+        providerId: String(providerId),
+        date: bookingDate,
+      });
+
+      if (serviceId && selectedService?.source === 'provider_services') {
+        search.set('providerServiceId', serviceId);
+      }
+
+      if (selectedService?.service_duration_minutes) {
+        search.set('serviceDurationMinutes', String(selectedService.service_duration_minutes));
+      }
+
       try {
-        const payload = await apiRequest<{ slots: Slot[] }>(
-          `/api/bookings/slots?provider_id=${providerId}&booking_date=${bookingDate}&service_id=${serviceId || ''}`,
-        );
+        const payload = await apiRequest<{ slots: Slot[] }>(`/api/bookings/available-slots?${search.toString()}`);
 
         if (!isMounted) return;
         setSlots(payload.slots ?? []);
+        setSlotStartTime(payload.slots?.[0]?.start_time ?? '');
       } catch {
         if (isMounted) {
           setSlots([]);
+          setSlotStartTime('');
         }
       }
     }
@@ -314,11 +365,21 @@ export default function PremiumUserBookingFlow() {
     return () => {
       isMounted = false;
     };
-  }, [bookingDate, providerId, serviceId]);
+  }, [bookingDate, providerId, serviceId, services]);
 
   // Calculate pricing
   useEffect(() => {
-    if (!serviceId && !selectedPackageId) {
+    if (!providerId) {
+      setPriceCalculation(null);
+      return;
+    }
+
+    if (bookingType === 'service' && !serviceId) {
+      setPriceCalculation(null);
+      return;
+    }
+
+    if (bookingType === 'package' && !selectedPackageId) {
       setPriceCalculation(null);
       return;
     }
@@ -327,11 +388,13 @@ export default function PremiumUserBookingFlow() {
 
     async function calculatePrice() {
       try {
-        const payload = await apiRequest<{ pricing: PricingBreakdown }>('/api/bookings/price-calculate', {
+        const payload = await apiRequest<{ success: boolean; data: PricingBreakdown }>('/api/services/calculate-price', {
           method: 'POST',
           body: JSON.stringify({
-            providerServiceId: bookingType === 'service' ? serviceId : undefined,
+            bookingType,
+            serviceId: bookingType === 'service' ? serviceId : undefined,
             packageId: bookingType === 'package' ? selectedPackageId : undefined,
+            providerId: providerId.toString(),
             addOns: Object.entries(selectedAddOns)
               .filter(([, qty]) => qty > 0)
               .map(([id, quantity]) => ({ id, quantity })),
@@ -339,7 +402,7 @@ export default function PremiumUserBookingFlow() {
         });
 
         if (!isMounted) return;
-        setPriceCalculation(payload.pricing ?? null);
+        setPriceCalculation(payload.data ?? null);
       } catch {
         if (isMounted) {
           setPriceCalculation(null);
@@ -352,7 +415,7 @@ export default function PremiumUserBookingFlow() {
     return () => {
       isMounted = false;
     };
-  }, [bookingType, serviceId, selectedPackageId, selectedAddOns]);
+  }, [bookingType, providerId, serviceId, selectedPackageId, selectedAddOns]);
 
   // Clear discount when service changes
   useEffect(() => {
@@ -374,8 +437,12 @@ export default function PremiumUserBookingFlow() {
         );
         return;
       }
-      if (!serviceId) {
+      if (bookingType === 'service' && !serviceId) {
         showToast('Please select a service', 'error');
+        return;
+      }
+      if (bookingType === 'package' && !selectedPackageId) {
+        showToast('Please select a package', 'error');
         return;
       }
     }
@@ -442,7 +509,7 @@ export default function PremiumUserBookingFlow() {
     }
 
     if (bookingMode === 'home_visit' && (!locationAddress.trim() || !latitude || !longitude)) {
-      showToast('Home visit requires address and map coordinates', 'error');
+      showToast('For home visit, add your address and use location detection.', 'error');
       return;
     }
 
@@ -537,13 +604,32 @@ export default function PremiumUserBookingFlow() {
             <ServiceSelectionStep
               providers={providers}
               services={providerServices}
+              bookingType={bookingType}
+              categories={categories}
+              packages={packages}
+              selectedCategoryId={selectedCategoryId}
+              selectedPackageId={selectedPackageId}
               selectedProviderId={providerId}
               selectedServiceId={serviceId}
               bookingMode={bookingMode}
               selectedAutoProvider={selectedAutoProvider}
+              onBookingTypeChange={(type) => {
+                setBookingType(type);
+                if (type === 'service') {
+                  setSelectedPackageId(null);
+                  setSelectedCategoryId(null);
+                } else {
+                  setServiceId(null);
+                }
+              }}
               onAutoProviderSelect={setSelectedAutoProvider}
               onBookingModeChange={setBookingMode}
               onProviderChange={setProviderId}
+              onCategoryChange={(categoryId) => {
+                setSelectedCategoryId(categoryId);
+                setSelectedPackageId(null);
+              }}
+              onPackageChange={setSelectedPackageId}
               onServiceChange={setServiceId}
               onNext={handleNextStep}
             />
@@ -568,6 +654,8 @@ export default function PremiumUserBookingFlow() {
               locationAddress={locationAddress}
               latitude={latitude}
               longitude={longitude}
+              savedAddresses={savedAddresses}
+              selectedSavedAddressId={selectedSavedAddressId}
               providerNotes={providerNotes}
               onDateChange={setBookingDate}
               onSlotChange={setSlotStartTime}
@@ -575,6 +663,7 @@ export default function PremiumUserBookingFlow() {
               onLocationChange={setLocationAddress}
               onLatitudeChange={setLatitude}
               onLongitudeChange={setLongitude}
+              onSelectSavedAddress={setSelectedSavedAddressId}
               onNotesChange={setProviderNotes}
               onNext={handleNextStep}
               onPrev={handlePreviousStep}
@@ -583,7 +672,9 @@ export default function PremiumUserBookingFlow() {
 
           {currentStep === 'review' && (
             <ReviewConfirmStep
+              bookingType={bookingType}
               selectedService={services.find((s) => s.id === serviceId)}
+              selectedPackageName={packages.find((pkg) => pkg.id === selectedPackageId)?.name}
               selectedPet={pets.find((p) => p.id === petId)}
               selectedProvider={providers.find((p) => p.id === providerId)}
               bookingDate={bookingDate}
@@ -617,7 +708,9 @@ export default function PremiumUserBookingFlow() {
         {/* Sticky summary sidebar */}
         <BookingSummarySidebar
           step={currentStep}
+          bookingType={bookingType}
           service={services.find((s) => s.id === serviceId)}
+          packageName={packages.find((pkg) => pkg.id === selectedPackageId)?.name}
           pet={pets.find((p) => p.id === petId)}
           provider={providers.find((p) => p.id === providerId)}
           bookingDate={bookingDate}
