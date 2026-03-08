@@ -5,8 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useToast } from '@/components/ui/ToastProvider';
 import { uploadCompressedImage } from '@/lib/storage/upload-client';
-import { calculateAgeFromDOB } from '@/lib/utils/date';
-import Modal from '@/components/ui/Modal';
+import { calculateLightweightPetCompletion } from '@/lib/utils/pet-completion';
 import PetHeroHeader from './PetHeroHeader';
 import PetStepper from './PetStepper';
 import SectionCard from './SectionCard';
@@ -16,9 +15,6 @@ import MedicalRecordCard from './MedicalRecordCard';
 import StickyFooter from './StickyFooter';
 import EmptyState from './EmptyState';
 import SegmentedControl from './SegmentedControl';
-import ProgressRing from './ProgressRing';
-import PetPassportViewModal from './PetPassportViewModal';
-import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Pet = {
   id: number;
@@ -203,7 +199,7 @@ type ReminderPreferences = {
 type PetCreateForm = {
   name: string;
   breed: string;
-  dateOfBirth: string;
+  age: string;
   gender: string;
 };
 
@@ -387,76 +383,6 @@ function mapProfileToDraft(profile: FullPetProfile): PassportDraft {
   };
 }
 
-function calculateCompletionFromDraft(draftData: PassportDraft): number {
-  const age = draftData.pet.age.trim() ? Number.parseInt(draftData.pet.age, 10) : null;
-  const weight = draftData.pet.weight.trim() ? Number.parseFloat(draftData.pet.weight) : null;
-  const basicComplete =
-    draftData.pet.name.trim().length > 0 &&
-    (age === null || (Number.isFinite(age) && age >= 0 && age <= 40)) &&
-    (weight === null || (Number.isFinite(weight) && weight > 0 && weight <= 300));
-
-  const biteCount = draftData.pet.biteIncidentsCount.trim() ? Number.parseInt(draftData.pet.biteIncidentsCount, 10) : 0;
-  const behaviorTouched =
-    draftData.pet.aggressionLevel.trim().length > 0 ||
-    draftData.pet.socialWithDogs.trim().length > 0 ||
-    draftData.pet.socialWithCats.trim().length > 0 ||
-    draftData.pet.socialWithChildren.trim().length > 0 ||
-    draftData.pet.isBiteHistory ||
-    draftData.pet.houseTrained ||
-    draftData.pet.leashTrained ||
-    draftData.pet.crateTrained ||
-    draftData.pet.separationAnxiety;
-  const behaviorComplete = behaviorTouched && Number.isFinite(biteCount) && biteCount >= 0;
-
-  const vaccinationsTouched = draftData.vaccinations.length > 0;
-  const vaccinationsComplete =
-    vaccinationsTouched &&
-    draftData.vaccinations.every((row) => {
-      if (!row.vaccineName.trim() || !row.administeredDate) {
-        return false;
-      }
-      if (row.nextDueDate && row.nextDueDate < row.administeredDate) {
-        return false;
-      }
-      return true;
-    });
-
-  const medicalTouched = draftData.medicalRecords.length > 0;
-  const medicalComplete = medicalTouched && draftData.medicalRecords.every((row) => row.conditionName.trim().length > 0);
-
-  const feedingComplete =
-    draftData.feedingInfo.foodType.trim().length > 0 ||
-    draftData.feedingInfo.brandName.trim().length > 0 ||
-    draftData.feedingInfo.feedingSchedule.trim().length > 0 ||
-    draftData.feedingInfo.foodAllergies.trim().length > 0 ||
-    draftData.feedingInfo.specialDietNotes.trim().length > 0 ||
-    draftData.feedingInfo.treatsAllowed !== true;
-
-  const groomingComplete =
-    draftData.groomingInfo.coatType.trim().length > 0 ||
-    draftData.groomingInfo.groomingFrequency.trim().length > 0 ||
-    draftData.groomingInfo.lastGroomingDate.trim().length > 0 ||
-    draftData.groomingInfo.nailTrimFrequency.trim().length > 0 ||
-    draftData.groomingInfo.mattingProne;
-
-  const phonePattern = /^[0-9+()\-\s]{7,20}$/;
-  const emergencyPhone = draftData.emergencyInfo.emergencyContactPhone.trim();
-  const preferredPhone = draftData.emergencyInfo.preferredVetPhone.trim();
-  const emergencyTouched =
-    draftData.emergencyInfo.emergencyContactName.trim().length > 0 ||
-    emergencyPhone.length > 0 ||
-    draftData.emergencyInfo.preferredVetClinic.trim().length > 0 ||
-    preferredPhone.length > 0;
-  const emergencyComplete =
-    emergencyTouched &&
-    (!emergencyPhone || phonePattern.test(emergencyPhone)) &&
-    (!preferredPhone || phonePattern.test(preferredPhone));
-
-  const stepCompletions = [basicComplete, behaviorComplete, vaccinationsComplete, medicalComplete, feedingComplete, groomingComplete, emergencyComplete];
-  const completedCount = stepCompletions.filter(Boolean).length;
-  return Math.round((completedCount / 7) * 100);
-}
-
 function normalizePhoneInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -507,13 +433,13 @@ function stepIndexFromFieldPath(path: string) {
 export default function UserPetProfilesClient({ initialPets }: { initialPets: Pet[] }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const [pets, setPets] = useState(initialPets);
-  const [petCompletions, setPetCompletions] = useState<Record<number, number>>({});
+  const [photoUrls, setPhotoUrls] = useState<Record<number, string>>({});
   const [expandedVaccinations, setExpandedVaccinations] = useState<Record<number, boolean>>({});
   const [expandedMedicalRecords, setExpandedMedicalRecords] = useState<Record<number, boolean>>({});
   const [selectedPetId, setSelectedPetId] = useState<number | null>(initialPets[0]?.id ?? null);
   const [stepIndex, setStepIndex] = useState(0);
   const [draft, setDraft] = useState<PassportDraft>(emptyDraft());
-  const [newPet, setNewPet] = useState<PetCreateForm>({ name: '', breed: '', dateOfBirth: '', gender: '' });
+  const [newPet, setNewPet] = useState<PetCreateForm>({ name: '', breed: '', age: '', gender: '' });
   const [newPetPhotoFile, setNewPetPhotoFile] = useState<File | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [reminders, setReminders] = useState<ReminderGroup[]>([]);
@@ -531,12 +457,6 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'draft-saved' | 'error'>('idle');
   const [lastDraftSavedAt, setLastDraftSavedAt] = useState<string | null>(null);
   const [highlightStepIndex, setHighlightStepIndex] = useState<number | null>(null);
-  const [showCreatePetModal, setShowCreatePetModal] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [showViewModal, setShowViewModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [viewModalData, setViewModalData] = useState<FullPetProfile | null>(null);
-  const [isLoadingViewData, setIsLoadingViewData] = useState(false);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
 
@@ -545,8 +465,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   const draftStorageKey = selectedPetId ? `pet-passport-draft-${selectedPetId}` : null;
 
   const stepCompletion = useMemo(() => {
-    // Calculate age from dateOfBirth instead of using draft.pet.age
-    const age = draft.pet.dateOfBirth ? calculateAgeFromDOB(draft.pet.dateOfBirth) : null;
+    const age = draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null;
     const weight = draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null;
     const basicComplete =
       draft.pet.name.trim().length > 0 &&
@@ -625,27 +544,33 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
   useEffect(() => {
     let active = true;
 
-    async function hydrateCompletions() {
+    async function hydratePhotoUrls() {
       const entries = await Promise.all(
-        pets.map(async (pet): Promise<[number, number]> => {
-          try {
-            const response = await fetch(`/api/user/pets/${pet.id}/passport`);
-            if (!response.ok) {
-              return [pet.id, 0];
-            }
-
-            const payload = (await response.json().catch(() => null)) as { profile?: FullPetProfile } | null;
-            
-            if (!payload?.profile) {
-              return [pet.id, 0];
-            }
-
-            const profileDraft = mapProfileToDraft(payload.profile);
-            const completion = calculateCompletionFromDraft(profileDraft);
-            return [pet.id, completion];
-          } catch {
-            return [pet.id, 0];
+        pets.map(async (pet): Promise<[number, string]> => {
+          if (!pet.photo_url) {
+            return [pet.id, ''];
           }
+
+          if (/^https?:\/\//i.test(pet.photo_url)) {
+            return [pet.id, pet.photo_url];
+          }
+
+          const response = await fetch('/api/storage/signed-read-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bucket: 'pet-photos',
+              path: pet.photo_url,
+              expiresIn: 3600,
+            }),
+          });
+
+          if (!response.ok) {
+            return [pet.id, ''];
+          }
+
+          const payload = (await response.json().catch(() => null)) as { signedUrl?: string } | null;
+          return [pet.id, payload?.signedUrl ?? ''];
         }),
       );
 
@@ -653,14 +578,16 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         return;
       }
 
-      const next: Record<number, number> = {};
-      entries.forEach(([id, completion]) => {
-        next[id] = completion;
+      const next: Record<number, string> = {};
+      entries.forEach(([id, url]) => {
+        if (url) {
+          next[id] = url;
+        }
       });
-      setPetCompletions(next);
+      setPhotoUrls(next);
     }
 
-    hydrateCompletions();
+    hydratePhotoUrls();
 
     return () => {
       active = false;
@@ -959,14 +886,11 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     }
 
     if (stepIndex === 0) {
-      const dateOfBirth = draft.pet.dateOfBirth.trim() ? draft.pet.dateOfBirth : null;
+      const age = draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null;
       const weight = draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null;
 
-      if (dateOfBirth) {
-        const age = calculateAgeFromDOB(dateOfBirth);
-        if (age === null || age < 0 || age > 150) {
-          nextErrors['pet.dateOfBirth'] = 'Date of birth is invalid.';
-        }
+      if (age !== null && (!Number.isFinite(age) || age < 0 || age > 40)) {
+        nextErrors['pet.age'] = 'Age must be between 0 and 40.';
       }
 
       if (weight !== null && (!Number.isFinite(weight) || weight <= 0 || weight > 300)) {
@@ -1070,8 +994,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
       try {
         const uploaded = await uploadCompressedImage(newPetPhotoFile, 'pet-photos');
         photoUrl = uploaded.path;
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : 'Photo upload failed.', 'error');
+      } catch {
+        showToast('Photo upload failed.', 'error');
         return;
       }
     }
@@ -1083,7 +1007,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         body: JSON.stringify({
           name,
           breed: newPet.breed.trim() || null,
-          dateOfBirth: newPet.dateOfBirth.trim() || null,
+          age: newPet.age.trim() ? Number.parseInt(newPet.age, 10) : null,
           gender: newPet.gender.trim() || null,
           photoUrl,
         }),
@@ -1102,9 +1026,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
 
       setPets((current) => [payload.pet!, ...current]);
       setSelectedPetId(payload.pet.id);
-      setNewPet({ name: '', breed: '', dateOfBirth: '', gender: '' });
+      setNewPet({ name: '', breed: '', age: '', gender: '' });
       setNewPetPhotoFile(null);
-      setShowCreatePetModal(false);
       showToast('Pet profile created.', 'success');
     });
   }
@@ -1144,72 +1067,21 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
     });
   }
 
-  async function openViewModal(petId: number) {
-    setIsLoadingViewData(true);
-    setShowViewModal(true);
-    setViewModalData(null);
-
-    try {
-      const response = await fetch(`/api/user/pets/${petId}/passport`);
-      if (!response.ok) {
-        showToast('Unable to load pet passport.', 'error');
-        setShowViewModal(false);
-        return;
-      }
-
-      const data = await response.json();
-      const profile = data.profile as FullPetProfile;
-      setViewModalData(profile);
-    } catch {
-      showToast('Error loading pet data.', 'error');
-      setShowViewModal(false);
-    } finally {
-      setIsLoadingViewData(false);
-    }
-  }
-
-  function openEditModal(petId: number) {
-    if (selectedPetId !== petId) {
-      if (!canLeaveCurrentContext()) {
-        return;
-      }
-      setSelectedPetId(petId);
-      setStepIndex(0);
-      setHighlightStepIndex(0);
-    }
-    setIsEditMode(true);
-    setShowEditModal(true);
-  }
-
-  function closeEditModal() {
-    if (hasUnsavedChanges) {
-      if (!window.confirm('You have unsaved changes. Close without saving?')) {
-        return;
-      }
-    }
-    setShowEditModal(false);
-    setIsEditMode(false);
-  }
-
   function buildStepPayload() {
     const basePayload = { stepIndex };
 
     if (stepIndex === 0) {
-      // Calculate age from dateOfBirth if present
-      const dateOfBirth = draft.pet.dateOfBirth || null;
-      const calculatedAge = dateOfBirth ? calculateAgeFromDOB(dateOfBirth) : null;
-      
       return {
         ...basePayload,
         pet: {
           name: draft.pet.name.trim(),
           breed: draft.pet.breed.trim() || null,
-          dateOfBirth: dateOfBirth,
-          age: calculatedAge,
+          age: draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null,
           weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
           gender: draft.pet.gender.trim() || null,
           allergies: draft.pet.allergies.trim() || null,
           photoUrl: draft.pet.photoUrl.trim() || null,
+          dateOfBirth: draft.pet.dateOfBirth || null,
           microchipNumber: draft.pet.microchipNumber.trim() || null,
           neuteredSpayed: draft.pet.neuteredSpayed,
           color: draft.pet.color.trim() || null,
@@ -1341,7 +1213,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                   ...pet,
                   name: draft.pet.name.trim() || pet.name,
                   breed: draft.pet.breed.trim() || null,
-                  age: calculateAgeFromDOB(draft.pet.dateOfBirth) ?? pet.age,
+                  age: draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null,
                   weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
                   gender: draft.pet.gender.trim() || null,
                   allergies: draft.pet.allergies.trim() || null,
@@ -1555,7 +1427,6 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
       const previousPets = pets;
 
       if (stepIndex === 0 && selectedPetId) {
-        const calculatedAge = draft.pet.dateOfBirth ? calculateAgeFromDOB(draft.pet.dateOfBirth) : null;
         setPets((current) =>
           current.map((pet) =>
             pet.id === selectedPetId
@@ -1563,7 +1434,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                   ...pet,
                   name: draft.pet.name.trim() || pet.name,
                   breed: draft.pet.breed.trim() || null,
-                  age: calculatedAge,
+                  age: draft.pet.age.trim() ? Number.parseInt(draft.pet.age, 10) : null,
                   weight: draft.pet.weight.trim() ? Number.parseFloat(draft.pet.weight) : null,
                   gender: draft.pet.gender.trim() || null,
                   allergies: draft.pet.allergies.trim() || null,
@@ -1626,15 +1497,11 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
       setDeletedMedicalRecordIds([]);
       setHasUnsavedChanges(false);
       setSaveStatus('saved');
-      
+      showToast('Step saved.', 'success');
+
       if (isLastStep) {
-        showToast('Passport completed! All sections saved successfully.', 'success');
         setStepIndex(0);
-        setHighlightStepIndex(0);
-        setIsEditMode(false);
-        editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else {
-        showToast('Step saved.', 'success');
         const nextStep = Math.min(STEPS.length - 1, stepIndex + 1);
         setStepIndex(nextStep);
         setHighlightStepIndex(nextStep);
@@ -1694,55 +1561,55 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         </div>
       </section>
 
-      {pets.length === 0 ? (
-        <SectionCard title="Create a New Pet" description="Start with essentials. You can complete passport sections after creating the profile.">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <FormField
-              label="Pet name"
-              value={newPet.name}
-              onChange={(event) => updateNewPetField('name', event.target.value, true)}
-              placeholder="Pet name *"
-            />
-            <SegmentedControl
-              label="Pet type"
-              options={[
-                { label: 'Dog', value: 'Dog', icon: '🐶' },
-                { label: 'Cat', value: 'Cat', icon: '🐱' },
-              ]}
-              value={newPet.breed}
-              onChange={(value) => setNewPet((current) => ({ ...current, breed: value }))}
-            />
-            <FormField
-              label="Date of birth"
-              type="date"
-              value={newPet.dateOfBirth}
-              onChange={(event) => setNewPet((current) => ({ ...current, dateOfBirth: event.target.value }))}
-              placeholder="Date of birth"
-            />
-            <FormField
-              label="Gender"
-              value={newPet.gender}
-              onChange={(event) => updateNewPetField('gender', event.target.value, true)}
-              placeholder="Gender"
-            />
-          </div>
+      <SectionCard title="Create a New Pet" description="Start with essentials. You can complete passport sections after creating the profile.">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <FormField
+            label="Pet name"
+            value={newPet.name}
+            onChange={(event) => updateNewPetField('name', event.target.value, true)}
+            placeholder="Pet name *"
+          />
+          <SegmentedControl
+            label="Pet type"
+            options={[
+              { label: 'Dog', value: 'Dog', icon: '🐶' },
+              { label: 'Cat', value: 'Cat', icon: '🐱' },
+            ]}
+            value={newPet.breed}
+            onChange={(value) => setNewPet((current) => ({ ...current, breed: value }))}
+          />
+          <FormField
+            label="Age"
+            type="number"
+            min={0}
+            max={40}
+            value={newPet.age}
+            onChange={(event) => setNewPet((current) => ({ ...current, age: event.target.value }))}
+            placeholder="Age"
+          />
+          <FormField
+            label="Gender"
+            value={newPet.gender}
+            onChange={(event) => updateNewPetField('gender', event.target.value, true)}
+            placeholder="Gender"
+          />
+        </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="cursor-pointer rounded-xl border border-neutral-200/60 px-4 py-2 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm">
-              {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload pet photo'}
-              <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
-            </label>
-            <button
-              type="button"
-              onClick={createPetProfile}
-              disabled={isPending}
-              className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
-            >
-              {isPending ? 'Creating...' : 'Create & Open Passport'}
-            </button>
-          </div>
-        </SectionCard>
-      ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="cursor-pointer rounded-xl border border-neutral-200/60 px-4 py-2 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm">
+            {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload pet photo'}
+            <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
+          </label>
+          <button
+            type="button"
+            onClick={createPetProfile}
+            disabled={isPending}
+            className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
+          >
+            {isPending ? 'Creating...' : 'Create & Open Passport'}
+          </button>
+        </div>
+      </SectionCard>
 
       <SectionCard title="Select Pet" description="Choose which pet profile to continue editing.">
         {pets.length === 0 ? (
@@ -1754,199 +1621,81 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
         ) : (
           <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {pets.map((pet) => {
-              const completion = petCompletions[pet.id] ?? 0;
-              const petPhotoValue = pet.photo_url ?? '';
-              const completionStatus = completion === 100 ? 'complete' : completion >= 70 ? 'high' : completion >= 40 ? 'medium' : 'low';
-              const statusConfig = {
-                complete: { label: 'Complete', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
-                high: { label: 'Almost there', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200' },
-                medium: { label: 'In progress', color: 'text-amber-600', bgColor: 'bg-amber-50', borderColor: 'border-amber-200' },
-                low: { label: 'Getting started', color: 'text-neutral-600', bgColor: 'bg-neutral-50', borderColor: 'border-neutral-200' }
-              };
-              const status = statusConfig[completionStatus];
-              
+              const completion =
+                pet.id === selectedPetId ? completionPercent : calculateLightweightPetCompletion(pet);
+              const completionToneClass =
+                completion >= 80
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : completion >= 50
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : 'border-neutral-200 bg-neutral-50 text-neutral-700';
+
               return (
                 <li
                   key={pet.id}
-                  className="group rounded-2xl border border-neutral-200/60 bg-white overflow-hidden shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md"
+                  className={`rounded-2xl border bg-white p-4 shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md ${selectedPetId === pet.id ? 'border-brand-500/60 ring-2 ring-brand-500/20' : 'border-neutral-200/60'}`}
                 >
-                  {/* Pet Photo */}
-                  <div className="relative h-36 overflow-hidden">
-                    {petPhotoValue ? (
-                      <StorageBackedImage
-                        value={petPhotoValue}
-                        bucket="pet-photos"
+                  <div className="relative mb-3">
+                    {photoUrls[pet.id] ? (
+                      <Image
+                        src={photoUrls[pet.id]}
                         alt={`${pet.name} photo`}
                         width={720}
                         height={360}
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        unoptimized
+                        className="h-36 w-full rounded-xl object-cover"
                       />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-50 to-neutral-100 text-4xl">🐾</div>
+                      <div className="flex h-36 w-full items-center justify-center rounded-xl border border-dashed border-neutral-200/70 bg-neutral-50 text-3xl">🐾</div>
                     )}
-                    {/* Passport Completion Badge */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
-                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
-                      <div className={`flex items-center gap-2 rounded-lg ${status.bgColor} ${status.borderColor} border backdrop-blur-sm px-2.5 py-1.5`}>
-                        <div className="relative">
-                          <ProgressRing percentage={completion} radius={14} circumference={88} strokeWidth={2} />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-medium text-neutral-600 uppercase tracking-wide">Passport</span>
-                          <span className={`text-xs font-bold ${status.color} leading-none`}>{status.label}</span>
-                        </div>
-                      </div>
+                    <div className={`absolute right-2 top-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${completionToneClass}`}>
+                      {completion}% complete
                     </div>
                   </div>
-
-                  {/* Pet Details */}
-                  <div className="p-4">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <h3 className="font-semibold text-neutral-950 text-lg leading-tight">{pet.name}</h3>
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-600">
-                          {pet.breed ? <span>{pet.breed}</span> : null}
-                          {pet.age !== null ? <span>{pet.age}y</span> : null}
-                          {pet.weight !== null ? <span>{pet.weight}kg</span> : null}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end">
-                        <span className="text-2xl font-bold text-neutral-900">{completion}%</span>
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-wide">Complete</span>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="mb-3 space-y-1.5">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-                        <div 
-                          className={`h-full rounded-full transition-all duration-500 ease-out ${
-                            completionStatus === 'complete' ? 'bg-emerald-500' :
-                            completionStatus === 'high' ? 'bg-blue-500' :
-                            completionStatus === 'medium' ? 'bg-amber-500' :
-                            'bg-neutral-400'
-                          }`}
-                          style={{ width: `${completion}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openViewModal(pet.id)}
-                        className="flex-1 rounded-xl border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 focus-visible:ring-offset-1"
-                      >
-                        👁️ View
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEditModal(pet.id)}
-                        className="flex-1 rounded-xl border border-blue-200/70 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 focus-visible:ring-offset-1"
-                      >
-                        ✏️ Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deletePetProfile(pet.id, pet.name)}
-                        disabled={isPending}
-                        className="rounded-xl border border-red-200/70 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
-                      >
-                        🗑️
-                      </button>
-                    </div>
+                  <div className="font-semibold text-neutral-950">{pet.name}</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-600">
+                    {pet.breed ? <span>Breed: {pet.breed}</span> : null}
+                    {pet.age !== null ? <span>Age: {pet.age}</span> : null}
+                    {pet.weight !== null ? <span>Weight: {pet.weight} kg</span> : null}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => selectPetWithGuard(pet.id)}
+                      className="rounded-xl border border-neutral-200/70 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-800 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
+                    >
+                      Open Passport
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deletePetProfile(pet.id, pet.name)}
+                      disabled={isPending}
+                      className="rounded-xl border border-red-200/70 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </li>
               );
             })}
-            <li
-              className="flex items-center justify-center rounded-2xl border-2 border-dashed border-neutral-300 bg-white p-4 shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md hover:border-coral"
-            >
-              <button
-                type="button"
-                onClick={() => setShowCreatePetModal(true)}
-                className="flex flex-col items-center gap-3"
-              >
-                <div className="text-4xl font-semibold text-neutral-400">+</div>
-                <span className="text-xs font-semibold text-neutral-600">Add Pet</span>
-              </button>
-            </li>
           </ul>
         )}
       </SectionCard>
 
-      <Modal
-        isOpen={showCreatePetModal}
-        onClose={() => setShowCreatePetModal(false)}
-        title="Create a New Pet"
-        description="Start with essentials. You can complete passport sections after creating the profile."
-        size="lg"
-      >
-        <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <FormField
-              label="Pet name"
-              value={newPet.name}
-              onChange={(event) => updateNewPetField('name', event.target.value, true)}
-              placeholder="Pet name *"
-            />
-            <SegmentedControl
-              label="Pet type"
-              options={[
-                { label: 'Dog', value: 'Dog', icon: '🐶' },
-                { label: 'Cat', value: 'Cat', icon: '🐱' },
-              ]}
-              value={newPet.breed}
-              onChange={(value) => setNewPet((current) => ({ ...current, breed: value }))}
-            />
-            <FormField
-              label="Date of birth"
-              type="date"
-              value={newPet.dateOfBirth}
-              onChange={(event) => setNewPet((current) => ({ ...current, dateOfBirth: event.target.value }))}
-              placeholder="Date of birth"
-            />
-            <FormField
-              label="Gender"
-              value={newPet.gender}
-              onChange={(event) => updateNewPetField('gender', event.target.value, true)}
-              placeholder="Gender"
-            />
-          </div>
+      {selectedPet ? (
+        <>
+          <PetHeroHeader
+            petName={selectedPet.name}
+            breed={selectedPet.breed}
+            age={selectedPet.age}
+            photoUrl={photoUrls[selectedPet.id]}
+            completionPercent={completionPercent}
+            lastSavedAt={lastDraftSavedAt}
+          />
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="cursor-pointer rounded-xl border border-neutral-200/60 px-4 py-2 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm">
-              {newPetPhotoFile ? `Photo selected: ${newPetPhotoFile.name}` : 'Upload pet photo'}
-              <input type="file" accept="image/*" className="hidden" onChange={(event) => setNewPetPhotoFile(event.target.files?.[0] ?? null)} />
-            </label>
-            <button
-              type="button"
-              onClick={createPetProfile}
-              disabled={isPending}
-              className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
-            >
-              {isPending ? 'Creating...' : 'Create & Open Passport'}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {selectedPet && showEditModal ? (
-        <Modal isOpen={showEditModal} onClose={closeEditModal} title={`Edit ${selectedPet.name}'s Passport`} size="xl">
-          <div className="space-y-6 max-h-[80vh] overflow-y-auto pr-2">
-            <PetHeroHeader
-              petName={selectedPet.name}
-              breed={selectedPet.breed}
-              age={selectedPet.age}
-              photoUrl={selectedPet.photo_url ?? null}
-              completionPercent={completionPercent}
-              lastSavedAt={lastDraftSavedAt}
-            />
-
-            <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold text-neutral-900">Completion Checklist</h3>
-              <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
+            <h3 className="text-sm font-semibold text-neutral-900">Completion Checklist</h3>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {STEPS.map((step, index) => (
                 <button
                   key={step}
@@ -1973,35 +1722,17 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                 {saveStatus === 'idle' ? 'Use Save Step to persist each section.' : null}
               </p>
               <div className="flex flex-wrap gap-2">
-                {!isEditMode ? (
-                  <button
-                    type="button"
-                    onClick={() => setIsEditMode(true)}
-                    className="rounded-xl border border-neutral-200/70 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
-                  >
-                    Edit
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsEditMode(false)}
-                    className="rounded-xl border border-neutral-200/70 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
-                  >
-                    Cancel
-                  </button>
-                )}
                 <button
                   type="button"
                   onClick={saveDraftLocally}
-                  disabled={!isEditMode}
-                  className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                  className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
                 >
                   Save Draft
                 </button>
                 <button
                   type="button"
                   onClick={saveCurrentStepOnly}
-                  disabled={!selectedPetId || isPending || !isEditMode}
+                  disabled={!selectedPetId || isPending}
                   className="rounded-xl bg-coral px-3 py-1.5 text-xs font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
                 >
                   {isPending ? 'Saving...' : 'Save Step'}
@@ -2010,8 +1741,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                   <button
                     type="button"
                     onClick={jumpToFirstError}
-                    disabled={!isEditMode}
-                    className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60"
+                    className="rounded-xl border border-neutral-200/70 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
                   >
                     Jump to Error
                   </button>
@@ -2019,20 +1749,17 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
               </div>
             </div>
 
-            {isEditMode ? (
-              <PetStepper
-                steps={[...STEPS]}
-                currentStep={stepIndex}
-                completedSteps={stepCompletion}
-                onStepClick={jumpToStepWithHighlight}
-              />
-            ) : null}
+            <PetStepper
+              steps={[...STEPS]}
+              currentStep={stepIndex}
+              completedSteps={stepCompletion}
+              onStepClick={jumpToStepWithHighlight}
+            />
 
             {isLoadingProfile ? <p className="text-sm text-neutral-600">Loading profile...</p> : null}
             {!selectedPet ? <p className="text-sm text-neutral-600">Select a pet to start.</p> : null}
-            {!isEditMode && selectedPet && !isLoadingProfile ? <p className="text-sm text-neutral-600">Click &quot;Edit&quot; to update this pet&apos;s passport information.</p> : null}
 
-            {selectedPet && !isLoadingProfile && isEditMode ? (
+            {selectedPet && !isLoadingProfile ? (
               <div
                 key={`editor-step-${stepIndex}`}
                 ref={editorRef}
@@ -2040,21 +1767,20 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
               >
                 {stepIndex === 0 ? (
                   <>
-                    <FormField label="Pet name" disabled={!isEditMode} value={draft.pet.name} onChange={(event) => updatePetField('name', event.target.value)} error={getFieldError('pet.name') ?? undefined} />
-                    <FormField label="Breed" disabled={!isEditMode} value={draft.pet.breed} onChange={(event) => updatePetField('breed', event.target.value)} />
-                    <FormField label="Date of birth" disabled={!isEditMode} type="date" value={draft.pet.dateOfBirth} onChange={(event) => updatePetField('dateOfBirth', event.target.value)} />
-                    <FormField label="Age" type="number" disabled={true} min={0} max={40} value={draft.pet.dateOfBirth ? String(calculateAgeFromDOB(draft.pet.dateOfBirth) ?? '') : ''} onChange={() => {}} />
-                    <FormField label="Weight (kg)" disabled={!isEditMode} type="number" min={0} step={0.1} value={draft.pet.weight} onChange={(event) => updatePetField('weight', event.target.value)} error={getFieldError('pet.weight') ?? undefined} />
-                    <FormField label="Gender" disabled={!isEditMode} value={draft.pet.gender} onChange={(event) => updatePetField('gender', event.target.value)} />
-                    <FormField label="Microchip number" disabled={!isEditMode} value={draft.pet.microchipNumber} onChange={(event) => updatePetField('microchipNumber', event.target.value)} />
-                    <FormField label="Color" disabled={!isEditMode} value={draft.pet.color} onChange={(event) => updatePetField('color', event.target.value)} />
+                    <FormField label="Pet name" value={draft.pet.name} onChange={(event) => updatePetField('name', event.target.value)} error={getFieldError('pet.name') ?? undefined} />
+                    <FormField label="Breed" value={draft.pet.breed} onChange={(event) => updatePetField('breed', event.target.value)} />
+                    <FormField label="Age" type="number" min={0} max={40} value={draft.pet.age} onChange={(event) => updatePetField('age', event.target.value)} error={getFieldError('pet.age') ?? undefined} />
+                    <FormField label="Weight (kg)" type="number" min={0} step={0.1} value={draft.pet.weight} onChange={(event) => updatePetField('weight', event.target.value)} error={getFieldError('pet.weight') ?? undefined} />
+                    <FormField label="Gender" value={draft.pet.gender} onChange={(event) => updatePetField('gender', event.target.value)} />
+                    <FormField label="Date of birth" type="date" value={draft.pet.dateOfBirth} onChange={(event) => updatePetField('dateOfBirth', event.target.value)} />
+                    <FormField label="Microchip number" value={draft.pet.microchipNumber} onChange={(event) => updatePetField('microchipNumber', event.target.value)} />
+                    <FormField label="Color" value={draft.pet.color} onChange={(event) => updatePetField('color', event.target.value)} />
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-neutral-900">Size category</label>
                       <select
-                        disabled={!isEditMode}
                         value={draft.pet.sizeCategory}
                         onChange={(event) => updatePetField('sizeCategory', event.target.value)}
-                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30"
                       >
                         <option value="">Select size</option>
                         {SIZE_CATEGORY_OPTIONS.map((option) => (
@@ -2065,10 +1791,9 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-neutral-900">Energy level</label>
                       <select
-                        disabled={!isEditMode}
                         value={draft.pet.energyLevel}
                         onChange={(event) => updatePetField('energyLevel', event.target.value)}
-                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30"
                       >
                         <option value="">Select level</option>
                         {ENERGY_LEVEL_OPTIONS.map((option) => (
@@ -2076,8 +1801,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                         ))}
                       </select>
                     </div>
-                    <FormField label="Allergies" disabled={!isEditMode} value={draft.pet.allergies} onChange={(event) => updatePetField('allergies', event.target.value)} className="lg:col-span-2" />
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.neuteredSpayed} onChange={(event) => updatePetField('neuteredSpayed', event.target.checked)} /> Neutered/Spayed</label>
+                    <FormField label="Allergies" value={draft.pet.allergies} onChange={(event) => updatePetField('allergies', event.target.value)} className="lg:col-span-2" />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.neuteredSpayed} onChange={(event) => updatePetField('neuteredSpayed', event.target.checked)} /> Neutered/Spayed</label>
                   </>
                 ) : null}
 
@@ -2085,22 +1810,22 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                   <>
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-neutral-900">Aggression level</label>
-                      <select disabled={!isEditMode} value={draft.pet.aggressionLevel} onChange={(event) => updatePetField('aggressionLevel', event.target.value)} className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:opacity-60 disabled:cursor-not-allowed">
+                      <select value={draft.pet.aggressionLevel} onChange={(event) => updatePetField('aggressionLevel', event.target.value)} className="w-full rounded-xl border border-neutral-200/60 bg-white px-4 py-3 text-sm transition-all duration-150 ease-out focus:outline-none focus:ring-2 focus:ring-brand-500/30">
                         <option value="">Select level</option>
                         {AGGRESSION_OPTIONS.map((option) => (
                           <option key={option} value={option}>{option.replaceAll('_', ' ')}</option>
                         ))}
                       </select>
                     </div>
-                    <FormField label="Bite incidents count" disabled={!isEditMode} type="number" min={0} value={draft.pet.biteIncidentsCount} onChange={(event) => updatePetField('biteIncidentsCount', event.target.value)} error={getFieldError('pet.biteIncidentsCount') ?? undefined} />
-                    <FormField label="Social with dogs" disabled={!isEditMode} value={draft.pet.socialWithDogs} onChange={(event) => updatePetField('socialWithDogs', event.target.value)} />
-                    <FormField label="Social with cats" disabled={!isEditMode} value={draft.pet.socialWithCats} onChange={(event) => updatePetField('socialWithCats', event.target.value)} />
-                    <FormField label="Social with children" disabled={!isEditMode} value={draft.pet.socialWithChildren} onChange={(event) => updatePetField('socialWithChildren', event.target.value)} />
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.isBiteHistory} onChange={(event) => updatePetField('isBiteHistory', event.target.checked)} /> Bite history</label>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.houseTrained} onChange={(event) => updatePetField('houseTrained', event.target.checked)} /> House trained</label>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.leashTrained} onChange={(event) => updatePetField('leashTrained', event.target.checked)} /> Leash trained</label>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.crateTrained} onChange={(event) => updatePetField('crateTrained', event.target.checked)} /> Crate trained</label>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.pet.separationAnxiety} onChange={(event) => updatePetField('separationAnxiety', event.target.checked)} /> Separation anxiety</label>
+                    <FormField label="Bite incidents count" type="number" min={0} value={draft.pet.biteIncidentsCount} onChange={(event) => updatePetField('biteIncidentsCount', event.target.value)} error={getFieldError('pet.biteIncidentsCount') ?? undefined} />
+                    <FormField label="Social with dogs" value={draft.pet.socialWithDogs} onChange={(event) => updatePetField('socialWithDogs', event.target.value)} />
+                    <FormField label="Social with cats" value={draft.pet.socialWithCats} onChange={(event) => updatePetField('socialWithCats', event.target.value)} />
+                    <FormField label="Social with children" value={draft.pet.socialWithChildren} onChange={(event) => updatePetField('socialWithChildren', event.target.value)} />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.isBiteHistory} onChange={(event) => updatePetField('isBiteHistory', event.target.checked)} /> Bite history</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.houseTrained} onChange={(event) => updatePetField('houseTrained', event.target.checked)} /> House trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.leashTrained} onChange={(event) => updatePetField('leashTrained', event.target.checked)} /> Leash trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.crateTrained} onChange={(event) => updatePetField('crateTrained', event.target.checked)} /> Crate trained</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.pet.separationAnxiety} onChange={(event) => updatePetField('separationAnxiety', event.target.checked)} /> Separation anxiety</label>
                   </>
                 ) : null}
 
@@ -2124,22 +1849,22 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                         onEdit={() => setExpandedVaccinations((current) => ({ ...current, [index]: true }))}
                       >
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                          <FormField label="Vaccine name" disabled={!isEditMode} value={row.vaccineName} onChange={(event) => updateVaccinationField(index, 'vaccineName', event.target.value, true)} error={getFieldError(`vaccinations.${index}.vaccineName`) ?? undefined} />
-                          <FormField label="Brand" disabled={!isEditMode} value={row.brandName} onChange={(event) => updateVaccinationField(index, 'brandName', event.target.value, true)} />
-                          <FormField label="Batch" disabled={!isEditMode} value={row.batchNumber} onChange={(event) => updateVaccinationField(index, 'batchNumber', event.target.value, true)} />
-                          <FormField label="Dose number" disabled={!isEditMode} type="number" min={1} value={row.doseNumber} onChange={(event) => updateVaccinationField(index, 'doseNumber', event.target.value)} />
-                          <FormField label="Administered" disabled={!isEditMode} type="date" value={row.administeredDate} onChange={(event) => updateVaccinationField(index, 'administeredDate', event.target.value)} error={getFieldError(`vaccinations.${index}.administeredDate`) ?? undefined} />
-                          <FormField label="Next due" disabled={!isEditMode} type="date" value={row.nextDueDate} onChange={(event) => updateVaccinationField(index, 'nextDueDate', event.target.value)} error={getFieldError(`vaccinations.${index}.nextDueDate`) ?? undefined} />
-                          <FormField label="Veterinarian" disabled={!isEditMode} value={row.veterinarianName} onChange={(event) => updateVaccinationField(index, 'veterinarianName', event.target.value, true)} />
-                          <FormField label="Clinic" disabled={!isEditMode} value={row.clinicName} onChange={(event) => updateVaccinationField(index, 'clinicName', event.target.value, true)} />
-                          <FormField label="Certificate URL" disabled={!isEditMode} value={row.certificateUrl} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, certificateUrl: event.target.value } : item) }))} className="lg:col-span-2" />
-                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={row.reminderEnabled} onChange={(event) => updateVaccinationField(index, 'reminderEnabled', event.target.checked)} /> Reminder enabled</label>
-                          <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { ...row, id: undefined }] }))} className="rounded-xl border border-neutral-200/70 px-3 py-2 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1 disabled:opacity-60">Duplicate</button>
+                          <FormField label="Vaccine name" value={row.vaccineName} onChange={(event) => updateVaccinationField(index, 'vaccineName', event.target.value, true)} error={getFieldError(`vaccinations.${index}.vaccineName`) ?? undefined} />
+                          <FormField label="Brand" value={row.brandName} onChange={(event) => updateVaccinationField(index, 'brandName', event.target.value, true)} />
+                          <FormField label="Batch" value={row.batchNumber} onChange={(event) => updateVaccinationField(index, 'batchNumber', event.target.value, true)} />
+                          <FormField label="Dose number" type="number" min={1} value={row.doseNumber} onChange={(event) => updateVaccinationField(index, 'doseNumber', event.target.value)} />
+                          <FormField label="Administered" type="date" value={row.administeredDate} onChange={(event) => updateVaccinationField(index, 'administeredDate', event.target.value)} error={getFieldError(`vaccinations.${index}.administeredDate`) ?? undefined} />
+                          <FormField label="Next due" type="date" value={row.nextDueDate} onChange={(event) => updateVaccinationField(index, 'nextDueDate', event.target.value)} error={getFieldError(`vaccinations.${index}.nextDueDate`) ?? undefined} />
+                          <FormField label="Veterinarian" value={row.veterinarianName} onChange={(event) => updateVaccinationField(index, 'veterinarianName', event.target.value, true)} />
+                          <FormField label="Clinic" value={row.clinicName} onChange={(event) => updateVaccinationField(index, 'clinicName', event.target.value, true)} />
+                          <FormField label="Certificate URL" value={row.certificateUrl} onChange={(event) => setDraft((current) => ({ ...current, vaccinations: current.vaccinations.map((item, itemIndex) => itemIndex === index ? { ...item, certificateUrl: event.target.value } : item) }))} className="lg:col-span-2" />
+                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={row.reminderEnabled} onChange={(event) => updateVaccinationField(index, 'reminderEnabled', event.target.checked)} /> Reminder enabled</label>
+                          <button type="button" onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { ...row, id: undefined }] }))} className="rounded-xl border border-neutral-200/70 px-3 py-2 text-xs font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1">Duplicate</button>
                         </div>
                       </VaccinationCard>
                     ))}
 
-                    <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { vaccineName: '', brandName: '', batchNumber: '', doseNumber: '', administeredDate: '', nextDueDate: '', veterinarianName: '', clinicName: '', certificateUrl: '', reminderEnabled: true }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60">Add Vaccination</button>
+                    <button type="button" onClick={() => setDraft((current) => ({ ...current, vaccinations: [...current.vaccinations, { vaccineName: '', brandName: '', batchNumber: '', doseNumber: '', administeredDate: '', nextDueDate: '', veterinarianName: '', clinicName: '', certificateUrl: '', reminderEnabled: true }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1">Add Vaccination</button>
                   </div>
                 ) : null}
 
@@ -2163,57 +1888,55 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
                         onEdit={() => setExpandedMedicalRecords((current) => ({ ...current, [index]: true }))}
                       >
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                          <FormField label="Condition name" disabled={!isEditMode} value={row.conditionName} onChange={(event) => updateMedicalField(index, 'conditionName', event.target.value, true)} error={getFieldError(`medicalRecords.${index}.conditionName`) ?? undefined} />
-                          <FormField label="Diagnosis date" disabled={!isEditMode} type="date" value={row.diagnosisDate} onChange={(event) => updateMedicalField(index, 'diagnosisDate', event.target.value)} />
-                          <FormField label="Medications" disabled={!isEditMode} value={row.medications} onChange={(event) => updateMedicalField(index, 'medications', event.target.value, true)} />
-                          <FormField label="Vet name" disabled={!isEditMode} value={row.vetName} onChange={(event) => updateMedicalField(index, 'vetName', event.target.value, true)} />
-                          <FormField label="Special care" disabled={!isEditMode} value={row.specialCareInstructions} onChange={(event) => updateMedicalField(index, 'specialCareInstructions', event.target.value, true)} className="lg:col-span-2" />
-                          <FormField label="Document URL" disabled={!isEditMode} value={row.documentUrl} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, documentUrl: event.target.value } : item) }))} />
-                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={row.ongoing} onChange={(event) => updateMedicalField(index, 'ongoing', event.target.checked)} /> Ongoing condition</label>
+                          <FormField label="Condition name" value={row.conditionName} onChange={(event) => updateMedicalField(index, 'conditionName', event.target.value, true)} error={getFieldError(`medicalRecords.${index}.conditionName`) ?? undefined} />
+                          <FormField label="Diagnosis date" type="date" value={row.diagnosisDate} onChange={(event) => updateMedicalField(index, 'diagnosisDate', event.target.value)} />
+                          <FormField label="Medications" value={row.medications} onChange={(event) => updateMedicalField(index, 'medications', event.target.value, true)} />
+                          <FormField label="Vet name" value={row.vetName} onChange={(event) => updateMedicalField(index, 'vetName', event.target.value, true)} />
+                          <FormField label="Special care" value={row.specialCareInstructions} onChange={(event) => updateMedicalField(index, 'specialCareInstructions', event.target.value, true)} className="lg:col-span-2" />
+                          <FormField label="Document URL" value={row.documentUrl} onChange={(event) => setDraft((current) => ({ ...current, medicalRecords: current.medicalRecords.map((item, itemIndex) => itemIndex === index ? { ...item, documentUrl: event.target.value } : item) }))} />
+                          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={row.ongoing} onChange={(event) => updateMedicalField(index, 'ongoing', event.target.checked)} /> Ongoing condition</label>
                         </div>
                       </MedicalRecordCard>
                     ))}
 
-                    <button type="button" disabled={!isEditMode} onClick={() => setDraft((current) => ({ ...current, medicalRecords: [...current.medicalRecords, { conditionName: '', diagnosisDate: '', ongoing: false, medications: '', specialCareInstructions: '', vetName: '', documentUrl: '' }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60">Add Medical Record</button>
+                    <button type="button" onClick={() => setDraft((current) => ({ ...current, medicalRecords: [...current.medicalRecords, { conditionName: '', diagnosisDate: '', ongoing: false, medications: '', specialCareInstructions: '', vetName: '', documentUrl: '' }] }))} className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1">Add Medical Record</button>
                   </div>
                 ) : null}
 
                 {stepIndex === 4 ? (
                   <>
-                    <FormField label="Food type" disabled={!isEditMode} value={draft.feedingInfo.foodType} onChange={(event) => updateFeedingField('foodType', event.target.value, true)} />
-                    <FormField label="Brand name" disabled={!isEditMode} value={draft.feedingInfo.brandName} onChange={(event) => updateFeedingField('brandName', event.target.value, true)} />
-                    <FormField label="Feeding schedule" disabled={!isEditMode} value={draft.feedingInfo.feedingSchedule} onChange={(event) => updateFeedingField('feedingSchedule', event.target.value, true)} className="lg:col-span-2" />
-                    <FormField label="Food allergies" disabled={!isEditMode} value={draft.feedingInfo.foodAllergies} onChange={(event) => updateFeedingField('foodAllergies', event.target.value, true)} />
-                    <FormField label="Special diet notes" disabled={!isEditMode} value={draft.feedingInfo.specialDietNotes} onChange={(event) => updateFeedingField('specialDietNotes', event.target.value, true)} className="lg:col-span-2" />
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.feedingInfo.treatsAllowed} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, treatsAllowed: event.target.checked } }))} /> Treats allowed</label>
+                    <FormField label="Food type" value={draft.feedingInfo.foodType} onChange={(event) => updateFeedingField('foodType', event.target.value, true)} />
+                    <FormField label="Brand name" value={draft.feedingInfo.brandName} onChange={(event) => updateFeedingField('brandName', event.target.value, true)} />
+                    <FormField label="Feeding schedule" value={draft.feedingInfo.feedingSchedule} onChange={(event) => updateFeedingField('feedingSchedule', event.target.value, true)} className="lg:col-span-2" />
+                    <FormField label="Food allergies" value={draft.feedingInfo.foodAllergies} onChange={(event) => updateFeedingField('foodAllergies', event.target.value, true)} />
+                    <FormField label="Special diet notes" value={draft.feedingInfo.specialDietNotes} onChange={(event) => updateFeedingField('specialDietNotes', event.target.value, true)} className="lg:col-span-2" />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.feedingInfo.treatsAllowed} onChange={(event) => setDraft((current) => ({ ...current, feedingInfo: { ...current.feedingInfo, treatsAllowed: event.target.checked } }))} /> Treats allowed</label>
                   </>
                 ) : null}
 
                 {stepIndex === 5 ? (
                   <>
-                    <FormField label="Coat type" disabled={!isEditMode} value={draft.groomingInfo.coatType} onChange={(event) => updateGroomingField('coatType', event.target.value, true)} />
-                    <FormField label="Grooming frequency" disabled={!isEditMode} value={draft.groomingInfo.groomingFrequency} onChange={(event) => updateGroomingField('groomingFrequency', event.target.value, true)} />
-                    <FormField label="Last grooming" disabled={!isEditMode} type="date" value={draft.groomingInfo.lastGroomingDate} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, lastGroomingDate: event.target.value } }))} />
-                    <FormField label="Nail trim frequency" disabled={!isEditMode} value={draft.groomingInfo.nailTrimFrequency} onChange={(event) => updateGroomingField('nailTrimFrequency', event.target.value, true)} />
-                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" style={{pointerEvents: !isEditMode ? 'none' : 'auto', opacity: !isEditMode ? 0.6 : 1}}><input type="checkbox" disabled={!isEditMode} checked={draft.groomingInfo.mattingProne} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, mattingProne: event.target.checked } }))} /> Matting prone</label>
+                    <FormField label="Coat type" value={draft.groomingInfo.coatType} onChange={(event) => updateGroomingField('coatType', event.target.value, true)} />
+                    <FormField label="Grooming frequency" value={draft.groomingInfo.groomingFrequency} onChange={(event) => updateGroomingField('groomingFrequency', event.target.value, true)} />
+                    <FormField label="Last grooming" type="date" value={draft.groomingInfo.lastGroomingDate} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, lastGroomingDate: event.target.value } }))} />
+                    <FormField label="Nail trim frequency" value={draft.groomingInfo.nailTrimFrequency} onChange={(event) => updateGroomingField('nailTrimFrequency', event.target.value, true)} />
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={draft.groomingInfo.mattingProne} onChange={(event) => setDraft((current) => ({ ...current, groomingInfo: { ...current.groomingInfo, mattingProne: event.target.checked } }))} /> Matting prone</label>
                   </>
                 ) : null}
 
                 {stepIndex === 6 ? (
                   <>
-                    <FormField label="Emergency contact name" disabled={!isEditMode} value={draft.emergencyInfo.emergencyContactName} onChange={(event) => updateEmergencyField('emergencyContactName', event.target.value, true)} />
+                    <FormField label="Emergency contact name" value={draft.emergencyInfo.emergencyContactName} onChange={(event) => updateEmergencyField('emergencyContactName', event.target.value, true)} />
                     <FormField
                       label="Emergency contact phone"
-                      disabled={!isEditMode}
                       value={draft.emergencyInfo.emergencyContactPhone}
                       onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: event.target.value } }))}
                       onBlur={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, emergencyContactPhone: normalizePhoneInput(event.target.value) } }))}
                       error={getFieldError('emergencyInfo.emergencyContactPhone') ?? undefined}
                     />
-                    <FormField label="Preferred vet clinic" disabled={!isEditMode} value={draft.emergencyInfo.preferredVetClinic} onChange={(event) => updateEmergencyField('preferredVetClinic', event.target.value, true)} />
+                    <FormField label="Preferred vet clinic" value={draft.emergencyInfo.preferredVetClinic} onChange={(event) => updateEmergencyField('preferredVetClinic', event.target.value, true)} />
                     <FormField
                       label="Preferred vet phone"
-                      disabled={!isEditMode}
                       value={draft.emergencyInfo.preferredVetPhone}
                       onChange={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: event.target.value } }))}
                       onBlur={(event) => setDraft((current) => ({ ...current, emergencyInfo: { ...current.emergencyInfo, preferredVetPhone: normalizePhoneInput(event.target.value) } }))}
@@ -2227,7 +1950,7 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
           </SectionCard>
 
           <StickyFooter
-            isEnabled={Boolean(selectedPet) && isEditMode}
+            isEnabled={Boolean(selectedPet)}
             stepNumber={stepIndex + 1}
             totalSteps={STEPS.length}
             savingStatus={saveStatus === 'draft-saved' ? 'saved' : saveStatus}
@@ -2239,18 +1962,8 @@ export default function UserPetProfilesClient({ initialPets }: { initialPets: Pe
             isPreviousDisabled={stepIndex === 0}
             isNextDisabled={false}
           />
-          </div>
-        </Modal>
+        </>
       ) : null}
-
-      {/* View Passport Modal */}
-      <PetPassportViewModal
-        isOpen={showViewModal}
-        onClose={() => setShowViewModal(false)}
-        data={viewModalData}
-        photoUrl={viewModalData ? (viewModalData.pet.photo_url ?? null) : null}
-        isLoading={isLoadingViewData}
-      />
     </div>
   );
 }

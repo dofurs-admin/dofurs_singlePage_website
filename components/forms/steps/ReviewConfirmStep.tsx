@@ -33,9 +33,7 @@ type DiscountPreview = {
 };
 
 interface ReviewConfirmStepProps {
-  bookingType: 'service' | 'package';
   selectedService: Service | undefined;
-  selectedPackageName?: string;
   selectedPet: Pet | undefined;
   selectedProvider: Provider | undefined;
   bookingDate: string;
@@ -54,9 +52,7 @@ interface ReviewConfirmStepProps {
 }
 
 export default function ReviewConfirmStep({
-  bookingType,
   selectedService,
-  selectedPackageName,
   selectedPet,
   selectedProvider,
   bookingDate,
@@ -106,20 +102,11 @@ export default function ReviewConfirmStep({
       <div className="grid gap-3 sm:grid-cols-2">
         {/* Service card */}
         <div className="rounded-lg border-2 border-neutral-200 bg-white p-4">
-          <p className="text-xs font-semibold text-neutral-600 uppercase">{bookingType === 'package' ? 'Package' : 'Service'}</p>
-          {bookingType === 'package' ? (
-            <>
-              <p className="mt-2 text-base font-semibold text-neutral-950">{selectedPackageName ?? 'Selected package'}</p>
-              <p className="mt-1 text-xs text-neutral-600">Includes multiple services</p>
-            </>
-          ) : (
-            <>
-              <p className="mt-2 text-base font-semibold text-neutral-950">{selectedService?.service_type}</p>
-              <p className="mt-1 text-xs text-neutral-600">
-                {selectedService?.service_duration_minutes} mins • ₹{selectedService?.base_price}
-              </p>
-            </>
-          )}
+          <p className="text-xs font-semibold text-neutral-600 uppercase">Service</p>
+          <p className="mt-2 text-base font-semibold text-neutral-950">{selectedService?.service_type}</p>
+          <p className="mt-1 text-xs text-neutral-600">
+            {selectedService?.service_duration_minutes} mins • ₹{selectedService?.base_price}
+          </p>
         </div>
 
         {/* Pet card */}

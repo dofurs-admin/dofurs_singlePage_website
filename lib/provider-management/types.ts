@@ -212,6 +212,7 @@ export type AdminServiceGlobalRolloutInput = {
   service_duration_minutes?: number | null;
   is_active?: boolean;
   service_pincodes?: string[];
+  provider_types?: ProviderType[];
   provider_ids?: number[];
   overwrite_existing?: boolean;
 };

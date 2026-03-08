@@ -9,7 +9,6 @@ import {
 } from './engines/slotEngine';
 import { assertBookingStateTransition } from './state-transition-guard';
 import type {
-  BookingCreationResponse,
   BookingRecord,
   BookingStatus,
   CreateBookingInput,
@@ -197,77 +196,7 @@ async function applyBookingStatusTransition(
 }
 
 export async function createBooking(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
-  const isServiceBooking = (input.bookingType ?? 'service') === 'service';
-
-  if (isServiceBooking) {
-    return createBookingWithLegacyServiceFallback(supabase, userId, input);
-  }
-
-  const requiresLegacyServiceId = await bookingTableRequiresLegacyServiceId(supabase);
-
-  if (requiresLegacyServiceId) {
-    return createBookingWithLegacyServiceFallback(supabase, userId, input);
-  }
-
-  const { data, error } = await supabase.rpc('create_booking_atomic', {
-    p_user_id: userId,
-    p_pet_id: input.petId,
-    p_provider_id: input.providerId,
-    p_provider_service_id: input.providerServiceId ?? null,
-    p_booking_type: input.bookingType ?? 'service',
-    p_package_id: input.packageId ?? null,
-    p_booking_date: input.bookingDate,
-    p_start_time: input.startTime,
-    p_booking_mode: input.bookingMode,
-    p_location_address: input.locationAddress ?? null,
-    p_latitude: input.latitude ?? null,
-    p_longitude: input.longitude ?? null,
-    p_provider_notes: input.providerNotes ?? null,
-    p_payment_mode: 'direct_to_provider',
-    p_discount_code: input.discountCode ?? null,
-    p_add_ons: input.addOns ?? [],
-  });
-
-  if (error) {
-    const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
-    const shouldFallbackToLegacyCreate =
-      message.includes('service_id') &&
-      (message.includes('null value') || message.includes('not-null constraint') || message.includes('violates not-null'));
-
-    if (isServiceBooking && input.providerServiceId) {
-      try {
-        return await createBookingWithLegacyServiceFallback(supabase, userId, input);
-      } catch (fallbackError) {
-        if (shouldFallbackToLegacyCreate) {
-          throw fallbackError;
-        }
-      }
-    }
-
-    if (shouldFallbackToLegacyCreate) {
-      return createBookingWithLegacyServiceFallback(supabase, userId, input);
-    }
-
-    throw error;
-  }
-
-  const response = data as BookingCreationResponse;
-
-  if (!response.success) {
-    throw new Error(`${response.error_code}:${response.error_message}`);
-  }
-
-  const { data: booking, error: bookingError } = await supabase
-    .from('bookings')
-    .select(BOOKING_SELECT)
-    .eq('id', response.booking_id)
-    .single<BookingRecord>();
-
-  if (bookingError || !booking) {
-    throw bookingError ?? new Error('Booking created but could not be retrieved');
-  }
-
-  return booking;
+  return createBookingWithLegacyServiceFallback(supabase, userId, input);
 }
 
 async function createBookingWithLegacyServiceFallback(supabase: SupabaseClient, userId: string, input: CreateBookingInput) {
@@ -379,44 +308,7 @@ async function resolveProviderServiceIdForLegacyCreate(supabase: SupabaseClient,
     return input.providerServiceId;
   }
 
-  if ((input.bookingType ?? 'service') === 'package' && input.packageId) {
-    const { data: packageService, error: packageServiceError } = await supabase
-      .from('package_services')
-      .select('provider_service_id, provider_services!inner(provider_id, is_active)')
-      .eq('package_id', input.packageId)
-      .eq('provider_services.provider_id', input.providerId)
-      .eq('provider_services.is_active', true)
-      .order('sequence_order', { ascending: true })
-      .limit(1)
-      .maybeSingle<{ provider_service_id: string }>();
-
-    if (packageServiceError) {
-      throw packageServiceError;
-    }
-
-    if (packageService?.provider_service_id) {
-      return packageService.provider_service_id;
-    }
-  }
-
   throw new Error('Service not found or is inactive.');
-}
-
-async function bookingTableRequiresLegacyServiceId(supabase: SupabaseClient) {
-  const { data, error } = await supabase
-    .from('information_schema.columns')
-    .select('is_nullable')
-    .eq('table_schema', 'public')
-    .eq('table_name', 'bookings')
-    .eq('column_name', 'service_id')
-    .limit(1)
-    .maybeSingle<{ is_nullable: 'YES' | 'NO' }>();
-
-  if (error || !data) {
-    return false;
-  }
-
-  return data.is_nullable === 'NO';
 }
 
 export async function getMyBookings(supabase: SupabaseClient, userId: string) {

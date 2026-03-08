@@ -53,7 +53,7 @@ export async function GET() {
           failed: 1,
         },
         generated_at: new Date().toISOString(),
-        error: `Health check RPC failed: ${error.message}. Apply migrations 038 and 039, then retry.`,
+        error: `Health check RPC failed: ${error.message}. Ensure schema health migrations are applied, then retry.`,
       },
       { status: 200 },
     );

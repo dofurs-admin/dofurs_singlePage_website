@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adminServiceGlobalRolloutSchema,
   providerDetailsUpdateSchema,
   providerDocumentCreateSchema,
   providerDocumentPatchSchema,
@@ -47,6 +48,31 @@ describe('provider management validation', () => {
       page: 2,
       pageSize: 10,
       rating: 4,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('validates global rollout payload with provider_types', () => {
+    const parsed = adminServiceGlobalRolloutSchema.safeParse({
+      service_type: 'grooming_session',
+      base_price: 599,
+      is_active: true,
+      provider_types: ['groomer', 'clinic'],
+      overwrite_existing: false,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('remains backward-compatible when provider_ids is included', () => {
+    const parsed = adminServiceGlobalRolloutSchema.safeParse({
+      service_type: 'grooming_session',
+      base_price: 599,
+      is_active: true,
+      provider_types: ['groomer'],
+      provider_ids: [101, 202],
+      overwrite_existing: true,
     });
 
     expect(parsed.success).toBe(true);

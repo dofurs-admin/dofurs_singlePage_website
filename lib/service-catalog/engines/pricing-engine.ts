@@ -3,9 +3,8 @@ import { calculateBookingPriceWithSupabase } from '@/lib/bookings/engines/pricin
 import type { PricingBreakdown } from '@/lib/bookings/types';
 
 export type BookingPriceParameters = {
-  bookingType: 'service' | 'package';
+  bookingType?: 'service';
   serviceId?: string;
-  packageId?: string;
   providerId: string | number | bigint;
   quantity?: number;
   addOns?: Array<{ id: string; quantity: number }>;
@@ -15,9 +14,8 @@ export async function calculateBookingPrice(params: BookingPriceParameters): Pro
   const supabase = getSupabaseAdminClient();
 
   return calculateBookingPriceWithSupabase(supabase, {
-    bookingType: params.bookingType,
+    bookingType: 'service',
     serviceId: params.serviceId,
-    packageId: params.packageId,
     providerId: params.providerId,
     addOns: params.addOns,
   });

@@ -40,14 +40,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const effectiveBookingType = parsed.data.bookingType ?? 'service';
-
     // Security: Never trust client-provided finalPrice or discountAmount
     // All pricing calculated server-side in DB RPC
     const bookingInput = {
       petId: parsed.data.petId,
       providerId: parsed.data.providerId,
-      providerServiceId: effectiveBookingType === 'service' ? parsed.data.providerServiceId : undefined,
+      providerServiceId: parsed.data.providerServiceId,
       bookingDate: parsed.data.bookingDate,
       startTime: parsed.data.startTime,
       bookingMode: parsed.data.bookingMode,
@@ -55,8 +53,7 @@ export async function POST(request: Request) {
       latitude: parsed.data.latitude,
       longitude: parsed.data.longitude,
       providerNotes: parsed.data.providerNotes,
-      bookingType: effectiveBookingType,
-      packageId: effectiveBookingType === 'package' ? parsed.data.packageId : undefined,
+      bookingType: 'service' as const,
       discountCode: parsed.data.discountCode,
       // Client pricing removed - calculated server-side only
       addOns: parsed.data.addOns,

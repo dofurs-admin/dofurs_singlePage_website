@@ -175,6 +175,7 @@ export const adminServiceGlobalRolloutSchema = z.object({
   service_duration_minutes: z.number().int().positive().nullable().optional(),
   is_active: z.boolean().optional(),
   service_pincodes: z.array(indianPincodeSchema).max(200).optional(),
+  provider_types: z.array(providerTypeSchema).max(PROVIDER_TYPES.length).optional(),
   provider_ids: z.array(z.number().int().positive()).max(2000).optional(),
   overwrite_existing: z.boolean().optional(),
 });

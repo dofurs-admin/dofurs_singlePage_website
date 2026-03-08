@@ -41,11 +41,11 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
     providersResult,
     moderationProviders,
     serviceCategoriesResult,
-    servicePackagesResult,
+    catalogServicesResult,
   ] = await Promise.all([
     supabase
       .from('bookings')
-      .select('id, provider_id, booking_start, booking_date, start_time, end_time, status, booking_status, booking_mode, service_type')
+      .select('id, user_id, provider_id, booking_start, booking_date, start_time, end_time, status, booking_status, booking_mode, service_type')
       .order('booking_start', { ascending: false })
       .limit(200),
     supabase.from('providers').select('id, name').order('name', { ascending: true }).limit(200),
@@ -55,7 +55,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
       .select('*')
       .order('display_order', { ascending: true }),
     supabase
-      .from('service_packages')
+      .from('provider_services')
       .select('*')
       .order('display_order', { ascending: true }),
   ]);
@@ -71,7 +71,6 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
   const providerAvailabilityResult = { data: [] };
   const providerServicesResult = { data: [] };
   const providerServicePincodesResult = { data: [] };
-  const catalogServicesResult = { data: [] };
 
   return (
     <AdminDashboardClient
@@ -87,7 +86,6 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
       initialDiscounts={platformDiscounts}
       initialDiscountAnalytics={discountAnalytics}
       initialServiceCategories={serviceCategoriesResult.data ?? []}
-      initialServicePackages={servicePackagesResult.data ?? []}
       initialCatalogServices={catalogServicesResult.data ?? []}
     />
   );

@@ -3,7 +3,9 @@
 import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import ImageUploadField from '@/components/ui/ImageUploadField';
+import Modal from '@/components/ui/Modal';
 import type { Service, ServiceCategory } from '@/lib/service-catalog/types';
+import { toSlug } from '@/lib/utils/slug';
 
 type ServiceBuilderProps = {
   initialServices: Service[];
@@ -56,6 +58,7 @@ function parseOptionalInteger(value: string) {
 
 export default function ServiceBuilder({ initialServices, categories }: ServiceBuilderProps) {
   const [services, setServices] = useState<Service[]>(initialServices);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
   const [serviceDraft, setServiceDraft] = useState<ServiceDraft>({
@@ -83,6 +86,20 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
     setServiceDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function setServiceTypeWithSlug(serviceType: string) {
+    setServiceDraft((current) => {
+      const currentAutoSlug = toSlug(current.service_type);
+      const nextAutoSlug = toSlug(serviceType);
+      const shouldAutoUpdateSlug = !current.slug.trim() || current.slug === currentAutoSlug;
+
+      return {
+        ...current,
+        service_type: serviceType,
+        slug: shouldAutoUpdateSlug ? nextAutoSlug : current.slug,
+      };
+    });
+  }
+
   function resetServiceDraft() {
     setServiceDraft({
       provider_id: '',
@@ -104,6 +121,15 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
       requires_pet_details: true,
       requires_location: true,
     });
+  }
+
+  function openCreateServiceModal() {
+    resetServiceDraft();
+    setIsEditorOpen(true);
+  }
+
+  function closeServiceModal() {
+    setIsEditorOpen(false);
   }
 
   function loadServiceInDraft(service: Service) {
@@ -220,6 +246,7 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
         }
 
         resetServiceDraft();
+        closeServiceModal();
       } catch (error) {
         showToast(error instanceof Error ? error.message : 'Failed to save service.', 'error');
       }
@@ -250,17 +277,100 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-[#f2dfcf] bg-white p-6 shadow-soft-md">
-        <h2 className="text-xl font-semibold text-ink">Service Builder</h2>
-        <p className="mt-1 text-xs text-[#6b6b6b]">
-          Create and manage individual services with detailed configurations.
-        </p>
+      <div className="rounded-3xl border border-[#f2dfcf] bg-gradient-to-b from-[#fffdfb] to-white p-6 shadow-soft-md">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Services</h2>
+            <p className="mt-1 text-xs text-[#6b6b6b]">
+              Manage all service offerings in one clean, searchable list.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-2.5 py-1 text-[11px] font-semibold text-ink">
+              {services.length} total
+            </span>
+            <button
+              type="button"
+              onClick={openCreateServiceModal}
+              className="rounded-full bg-coral px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448]"
+            >
+              + Add New Service
+            </button>
+          </div>
+        </div>
 
-        <div className="mt-4 rounded-xl border border-[#f2dfcf] p-4">
-          <p className="text-sm font-semibold text-ink">
-            {serviceDraft.id ? 'Edit Service' : 'Create New Service'}
-          </p>
-          <div className="mt-3 grid gap-3">
+        <div className="mt-4 rounded-xl border border-[#f2dfcf] p-3">
+          <p className="text-xs font-semibold text-ink">Existing Services</p>
+          {services.length === 0 ? (
+            <p className="mt-2 text-xs text-[#6b6b6b]">No services created yet.</p>
+          ) : (
+            <ul className="mt-2 grid gap-2">
+              {services.map((service) => (
+                <li
+                  key={service.id}
+                  className="rounded-lg border border-[#f2dfcf] p-2 text-xs"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex-1">
+                      <p className="font-medium text-ink">
+                        {service.service_type}{' '}
+                        {service.is_featured ? (
+                          <span className="ml-1 text-[10px] text-[#6b6b6b]">★ Featured</span>
+                        ) : null}
+                      </p>
+                      <p className="text-[11px] text-[#6b6b6b]">
+                        {service.service_mode.replace('_', ' ')} • ₹{service.base_price} • {service.service_duration_minutes || 60}min
+                      </p>
+                      {service.short_description ? (
+                        <p className="mt-1 text-[11px] text-[#6b6b6b]">{service.short_description}</p>
+                      ) : null}
+                    </div>
+                    <span
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                        service.is_active
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-red-200 bg-red-50 text-red-700'
+                      }`}
+                    >
+                      {service.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        loadServiceInDraft(service);
+                        setIsEditorOpen(true);
+                      }}
+                      disabled={isPending}
+                      className="rounded-full border border-[#f2dfcf] px-2.5 py-1 text-[10px] font-semibold text-ink hover:bg-[#fff7f0]"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteService(service.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-[#f2dfcf] bg-white px-2.5 py-1 text-[10px] font-semibold text-ink transition hover:bg-[#fff7f0]"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <Modal
+        isOpen={isEditorOpen}
+        onClose={closeServiceModal}
+        size="xl"
+        title={serviceDraft.id ? 'Edit Service' : 'Add New Service'}
+        description="Configure service details, pricing, media, and availability settings in one popup."
+      >
+        <div className="grid gap-3">
             <div className="grid gap-2 sm:grid-cols-2">
               <select
                 value={serviceDraft.category_id}
@@ -290,14 +400,14 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
 
             <input
               value={serviceDraft.service_type}
-              onChange={(event) => setServiceDraftField('service_type', event.target.value)}
+              onChange={(event) => setServiceTypeWithSlug(event.target.value)}
               placeholder="Service Type (e.g., Dog Grooming, Vet Consultation)"
               className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
             />
 
             <input
               value={serviceDraft.slug}
-              onChange={(event) => setServiceDraftField('slug', event.target.value)}
+              onChange={(event) => setServiceDraftField('slug', toSlug(event.target.value))}
               placeholder="Slug (e.g., dog-grooming)"
               className="rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs"
             />
@@ -424,7 +534,13 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
                 Featured
               </label>
 
-              <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
+              <label
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+                  serviceDraft.is_active
+                    ? 'border-green-200 bg-green-50 text-green-700'
+                    : 'border-red-200 bg-red-50 text-red-700'
+                }`}
+              >
                 <input
                   type="checkbox"
                   checked={serviceDraft.is_active}
@@ -432,7 +548,7 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
                     setServiceDraftField('is_active', event.target.checked)
                   }
                 />
-                Active
+                {serviceDraft.is_active ? 'Active' : 'Inactive'}
               </label>
 
               <label className="inline-flex items-center gap-2 rounded-xl border border-[#f2dfcf] px-3 py-2 text-xs">
@@ -457,88 +573,27 @@ export default function ServiceBuilder({ initialServices, categories }: ServiceB
                 Requires Location
               </label>
             </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={saveService}
-              disabled={isPending}
-              className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink hover:bg-[#fff7f0]"
-            >
-              {serviceDraft.id ? 'Update Service' : 'Create Service'}
-            </button>
-            {serviceDraft.id ? (
-              <button
-                type="button"
-                onClick={resetServiceDraft}
-                disabled={isPending}
-                className="rounded-full border border-[#f2dfcf] px-3 py-1.5 text-[11px] font-semibold text-ink hover:bg-[#fff7f0]"
-              >
-                Clear Edit
-              </button>
-            ) : null}
-          </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-[#f2dfcf] p-3">
-          <p className="text-xs font-semibold text-ink">Existing Services</p>
-          {services.length === 0 ? (
-            <p className="mt-2 text-xs text-[#6b6b6b]">No services created yet.</p>
-          ) : (
-            <ul className="mt-2 grid gap-2">
-              {services.map((service) => (
-                <li
-                  key={service.id}
-                  className="rounded-lg border border-[#f2dfcf] p-2 text-xs"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <p className="font-medium text-ink">
-                        {service.service_type}{' '}
-                        {service.is_featured ? (
-                          <span className="ml-1 text-[10px] text-[#6b6b6b]">★ Featured</span>
-                        ) : null}
-                      </p>
-                      <p className="text-[11px] text-[#6b6b6b]">
-                        {service.service_mode.replace('_', ' ')} • ₹{service.base_price} • {service.service_duration_minutes || 60}min
-                      </p>
-                      {service.short_description ? (
-                        <p className="mt-1 text-[11px] text-[#6b6b6b]">{service.short_description}</p>
-                      ) : null}
-                    </div>
-                    <span
-                      className={`rounded-full border border-[#f2dfcf] px-2.5 py-1 text-[11px] font-medium ${
-                        service.is_active ? 'bg-[#fff7f0]' : 'bg-gray-100'
-                      } text-ink`}
-                    >
-                      {service.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => loadServiceInDraft(service)}
-                      disabled={isPending}
-                      className="rounded-full border border-[#f2dfcf] px-2.5 py-1 text-[10px] font-semibold text-ink hover:bg-[#fff7f0]"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteService(service.id)}
-                      disabled={isPending}
-                      className="rounded-full border border-[#f2dfcf] px-2.5 py-1 text-[10px] font-semibold text-ink hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={saveService}
+            disabled={isPending}
+            className="rounded-full bg-coral px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448] disabled:opacity-60"
+          >
+            {serviceDraft.id ? 'Update Service' : 'Create Service'}
+          </button>
+          <button
+            type="button"
+            onClick={closeServiceModal}
+            disabled={isPending}
+            className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink transition hover:bg-[#ffefe0]"
+          >
+            Cancel
+          </button>
         </div>
-      </div>
+      </Modal>
     </div>
   );
 }

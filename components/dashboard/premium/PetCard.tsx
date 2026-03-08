@@ -10,15 +10,40 @@ interface PetCardProps {
   breed?: string;
   age?: number;
   photo?: string;
+  completionPercent?: number;
   className?: string;
 }
 
-export default function PetCard({ id, name, breed, age, photo, className }: PetCardProps) {
+export default function PetCard({ id, name, breed, age, photo, completionPercent, className }: PetCardProps) {
+  const normalizedCompletion =
+    typeof completionPercent === 'number'
+      ? Math.max(0, Math.min(100, Math.round(completionPercent)))
+      : null;
+
+  const badgeToneClass =
+    normalizedCompletion === null
+      ? ''
+      : normalizedCompletion >= 80
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : normalizedCompletion >= 50
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : 'border-neutral-200 bg-neutral-50 text-neutral-700';
+
   return (
     <div className={cn('card-interactive overflow-hidden group', className)}>
       {/* Photo */}
       {photo ? (
         <div className="relative h-40 w-full overflow-hidden bg-neutral-100">
+          {normalizedCompletion !== null ? (
+            <div
+              className={cn(
+                'absolute right-3 top-3 z-10 rounded-full border px-2.5 py-1 text-[11px] font-semibold backdrop-blur-sm',
+                badgeToneClass,
+              )}
+            >
+              {normalizedCompletion}% complete
+            </div>
+          ) : null}
           <Image
             src={photo}
             alt={`${name} photo`}
@@ -28,8 +53,18 @@ export default function PetCard({ id, name, breed, age, photo, className }: PetC
           />
         </div>
       ) : (
-        <div className="h-40 w-full bg-gradient-to-br from-neutral-100 to-neutral-50 flex items-center justify-center text-4xl">
-          🐾
+        <div className="relative h-40 w-full bg-gradient-to-br from-neutral-100 to-neutral-50 flex items-center justify-center text-4xl">
+          {normalizedCompletion !== null ? (
+            <div
+              className={cn(
+                'absolute right-3 top-3 rounded-full border px-2.5 py-1 text-[11px] font-semibold',
+                badgeToneClass,
+              )}
+            >
+              {normalizedCompletion}% complete
+            </div>
+          ) : null}
+          <span>🐾</span>
         </div>
       )}
 

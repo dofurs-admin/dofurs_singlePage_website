@@ -5,23 +5,19 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import { useBookingRealtime, useOptimisticUpdate } from '@/lib/hooks/useRealtime';
+import { calculateLightweightPetCompletion } from '@/lib/utils/pet-completion';
 
 // Premium Components
+import StatCard from './premium/StatCard';
 import BookingCard from './premium/BookingCard';
+import PetCard from './premium/PetCard';
 import EmptyState from './premium/EmptyState';
+import ActivityFeed from './premium/ActivityFeed';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
 import Alert from '@/components/ui/Alert';
 import SectionCard from './SectionCard';
 import FormField from './FormField';
-import PetPassportViewModal from './PetPassportViewModal';
-import type { PetPassportData } from './PetPassportViewModal';
-import PetFullEditModal from './PetFullEditModal';
-import ProgressRing from './ProgressRing';
-import Modal from '@/components/ui/Modal';
-import { uploadCompressedImage } from '@/lib/storage/upload-client';
-import { getPetFallbackIcon } from '@/lib/pets/icon-helpers';
-import StorageBackedImage from '@/components/ui/StorageBackedImage';
 
 type Pet = {
   id: number;
@@ -83,11 +79,11 @@ export default function UserDashboardClient({
   initialBookings: Booking[];
   view?: UserDashboardView;
 }) {
-  const [pets, setPets] = useState(initialPets);
+  const [pets] = useState(initialPets);
   const [bookings, setBookings] = useState(initialBookings);
-  const [petCompletions, setPetCompletions] = useState<Record<number, number>>({});
+  const [petPhotoUrls, setPetPhotoUrls] = useState<Record<number, string>>({});
   const [bookingFilter, setBookingFilter] = useState<'all' | 'active' | 'history'>('all');
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const { showToast } = useToast();
   const { performUpdate } = useOptimisticUpdate(bookings, setBookings);
   const [reminders, setReminders] = useState<ReminderGroup[]>([]);
@@ -97,16 +93,6 @@ export default function UserDashboardClient({
     emailEnabled: false,
     whatsappEnabled: false,
   });
-  const [showViewModal, setShowViewModal] = useState(false);
-  const [showCreatePetModal, setShowCreatePetModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingPet, setEditingPet] = useState<Pet | null>(null);
-  const [editingPetPhotoUrl, setEditingPetPhotoUrl] = useState<string>('');
-  const [viewModalData, setViewModalData] = useState<PetPassportData | null>(null);
-  const [isLoadingViewData, setIsLoadingViewData] = useState(false);
-  const [newPet, setNewPet] = useState({ name: '', breed: '', dateOfBirth: '', gender: '' });
-  const [newPetPhotoFile, setNewPetPhotoFile] = useState<File | null>(null);
-  const [newPetPhotoPreview, setNewPetPhotoPreview] = useState<string | null>(null);
 
   const bookingCounts = useMemo(() => {
     return {
@@ -127,6 +113,38 @@ export default function UserDashboardClient({
     return bookings;
   }, [bookings, bookingFilter]);
 
+  const userAlerts = useMemo(() => {
+    const alerts: Array<{ level: 'info' | 'warning' | 'success'; message: string }> = [];
+
+    const pending = bookings.filter((booking) => booking.status === 'pending').length;
+    const confirmed = bookings.filter((booking) => booking.status === 'confirmed').length;
+    const completed = bookings.filter((booking) => booking.status === 'completed').length;
+
+    if (pending > 0) {
+      alerts.push({ level: 'warning', message: `${pending} booking(s) are awaiting provider confirmation.` });
+    }
+
+    if (confirmed > 0) {
+      alerts.push({ level: 'info', message: `${confirmed} confirmed booking(s) coming up soon.` });
+    }
+
+    if (completed > 0) {
+      alerts.push({ level: 'success', message: `${completed} completed booking(s). Rebook your favorite service in one tap.` });
+    }
+
+    if (alerts.length === 0) {
+      alerts.push({ level: 'info', message: 'No active notifications. Start your next booking when ready.' });
+    }
+
+    return alerts;
+  }, [bookings]);
+
+  const petCompletionById = useMemo(() => {
+    return Object.fromEntries(
+      pets.map((pet) => [pet.id, calculateLightweightPetCompletion(pet)]),
+    ) as Record<number, number>;
+  }, [pets]);
+
   // Realtime subscription for booking updates
   const refreshBookings = useCallback(async () => {
     try {
@@ -141,6 +159,61 @@ export default function UserDashboardClient({
   }, []);
 
   useBookingRealtime(userId, refreshBookings);
+
+  useEffect(() => {
+    let active = true;
+
+    async function hydratePetPhotoUrls() {
+      const entries = await Promise.all(
+        pets.map(async (pet): Promise<[number, string]> => {
+          if (!pet.photo_url) {
+            return [pet.id, ''];
+          }
+
+          if (/^https?:\/\//i.test(pet.photo_url)) {
+            return [pet.id, pet.photo_url];
+          }
+
+          const response = await fetch('/api/storage/signed-read-url', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              bucket: 'pet-photos',
+              path: pet.photo_url,
+              expiresIn: 3600,
+            }),
+          });
+
+          if (!response.ok) {
+            return [pet.id, ''];
+          }
+
+          const payload = (await response.json().catch(() => null)) as { signedUrl?: string } | null;
+          return [pet.id, payload?.signedUrl ?? ''];
+        }),
+      );
+
+      if (!active) {
+        return;
+      }
+
+      const nextMap: Record<number, string> = {};
+      entries.forEach(([id, url]) => {
+        if (url) {
+          nextMap[id] = url;
+        }
+      });
+      setPetPhotoUrls(nextMap);
+    }
+
+    hydratePetPhotoUrls();
+
+    return () => {
+      active = false;
+    };
+  }, [pets]);
 
   useEffect(() => {
     let active = true;
@@ -209,184 +282,6 @@ export default function UserDashboardClient({
     };
   }, [reminderPreferences.daysAhead]);
 
-  // Load pet completion percentages
-  useEffect(() => {
-    let active = true;
-
-    async function loadPetCompletions() {
-      const completions: Record<number, number> = {};
-      
-      for (const pet of pets) {
-        try {
-          const response = await fetch(`/api/user/pets/${pet.id}/passport`);
-          if (response.ok && active) {
-            const data = await response.json();
-            const completion = calculateCompletion(data.profile);
-            completions[pet.id] = completion;
-          }
-        } catch {
-          completions[pet.id] = 0;
-        }
-      }
-
-      if (active) {
-        setPetCompletions(completions);
-      }
-    }
-
-    if (pets.length > 0) {
-      loadPetCompletions();
-    }
-
-    return () => {
-      active = false;
-    };
-  }, [pets]);
-
-  async function loadCompletion(petId: number) {
-    try {
-      const response = await fetch(`/api/user/pets/${petId}/passport`);
-      if (response.ok) {
-        const data = await response.json();
-        const completion = calculateCompletion(data.profile);
-        setPetCompletions((current) => ({ ...current, [petId]: completion }));
-      }
-    } catch {
-      // Silent fail
-    }
-  }
-
-  function calculateCompletion(profile: PetPassportData): number {
-    const total = 7;
-    let completed = 0;
-
-    // Basic info
-    if (profile.pet.name && profile.pet.breed && profile.pet.age !== null) completed++;
-    
-    // Behavior
-    if (profile.pet.aggression_level || profile.pet.social_with_dogs || profile.pet.social_with_cats) completed++;
-    
-    // Vaccinations
-    if (profile.vaccinations && profile.vaccinations.length > 0) completed++;
-    
-    // Medical records
-    if (profile.medicalRecords && profile.medicalRecords.length > 0) completed++;
-    
-    // Feeding info
-    if (profile.feedingInfo && profile.feedingInfo.food_type) completed++;
-    
-    // Grooming info
-    if (profile.groomingInfo && profile.groomingInfo.coat_type) completed++;
-    
-    // Emergency info
-    if (profile.emergencyInfo && profile.emergencyInfo.emergency_contact_name) completed++;
-
-    return Math.round((completed / total) * 100);
-  }
-
-  async function openViewModal(petId: number) {
-    setViewModalData(null);
-    setIsLoadingViewData(true);
-    setShowViewModal(true);
-
-    try {
-      const response = await fetch(`/api/user/pets/${petId}/passport`);
-      if (!response.ok) {
-        showToast('Unable to load pet passport.', 'error');
-        setShowViewModal(false);
-        return;
-      }
-
-      const data = await response.json();
-      const profile = data.profile as PetPassportData;
-      setViewModalData(profile);
-    } catch {
-      showToast('Error loading pet data.', 'error');
-      setShowViewModal(false);
-    } finally {
-      setIsLoadingViewData(false);
-    }
-  }
-
-  function openEditModal(pet: Pet) {
-    setEditingPet(pet);
-    setEditingPetPhotoUrl(pet.photo_url || '');
-    setShowEditModal(true);
-  }
-
-  async function deletePetProfile(petId: number, petName: string) {
-    if (!window.confirm(`Are you sure you want to delete ${petName}'s profile? This action cannot be undone.`)) {
-      return;
-    }
-
-    startTransition(async () => {
-      try {
-        const response = await fetch(`/api/user/pets/${petId}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          showToast('Unable to delete pet profile.', 'error');
-          return;
-        }
-
-        setPets((current) => current.filter((pet) => pet.id !== petId));
-        showToast(`${petName}'s profile deleted successfully.`, 'success');
-      } catch {
-        showToast('An error occurred while deleting the pet profile.', 'error');
-      }
-    });
-  }
-
-  async function createPetProfile() {
-    const name = newPet.name.trim();
-    if (!name) {
-      showToast('Pet name is required.', 'error');
-      return;
-    }
-
-    let photoUrl: string | null = null;
-    if (newPetPhotoFile) {
-      try {
-        const uploaded = await uploadCompressedImage(newPetPhotoFile, 'pet-photos');
-        photoUrl = uploaded.path;
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : 'Photo upload failed.', 'error');
-        return;
-      }
-    }
-
-    startTransition(async () => {
-      const response = await fetch('/api/user/pets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          breed: newPet.breed.trim() || null,
-          dateOfBirth: newPet.dateOfBirth.trim() || null,
-          gender: newPet.gender.trim() || null,
-          photoUrl,
-        }),
-      });
-
-      if (!response.ok) {
-        showToast('Unable to create pet profile.', 'error');
-        return;
-      }
-
-      const payload = (await response.json().catch(() => null)) as { pet?: Pet } | null;
-      if (!payload?.pet) {
-        showToast('Unexpected response while creating pet.', 'error');
-        return;
-      }
-
-      setPets((current) => [payload.pet!, ...current]);
-      setNewPet({ name: '', breed: '', dateOfBirth: '', gender: '' });
-      closeCreatePetModal();
-      showToast('Pet profile created.', 'success');
-    });
-  }
-
   function cancelBooking(bookingId: number) {
     // Optimistic update: immediately mark as cancelled
     performUpdate(
@@ -409,439 +304,200 @@ export default function UserDashboardClient({
     );
   }
 
-  function closeCreatePetModal() {
-    setShowCreatePetModal(false);
-    setNewPetPhotoFile(null);
-    if (newPetPhotoPreview?.startsWith('blob:')) {
-      URL.revokeObjectURL(newPetPhotoPreview);
-    }
-    setNewPetPhotoPreview(null);
-  }
+  // Prepare data for premium layout
+  const activityItems = userAlerts.map((alert, index) => ({
+    id: `${alert.level}-${index}`,
+    icon: alert.level === 'warning' ? '⚠️' : alert.level === 'success' ? '✅' : 'ℹ️',
+    message: alert.message,
+    timestamp: 'Just now',
+    type: alert.level === 'warning' ? ('warning' as const) : alert.level === 'success' ? ('success' as const) : ('info' as const),
+  }));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-12">
       {/* ===== HERO SECTION ===== */}
-      <div className="rounded-2xl bg-gradient-to-br from-coral/5 via-orange-50/30 to-transparent border border-coral/10 p-6">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex-1">
-            <h1 className="text-2xl lg:text-3xl font-bold text-neutral-950 mb-1">Hey {userName}! 👋</h1>
-            <p className="text-sm text-neutral-600">Manage your pets, bookings, and keep track of everything in one place.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Link href="/forms/customer-booking">
-              <Button>Book a Service</Button>
-            </Link>
-          </div>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-page-title mb-2">Welcome back, {userName}! 👋</h1>
+          <p className="text-body text-neutral-600">Let's take care of your pets and manage your bookings.</p>
         </div>
-        {/* Quick Stats */}
-        <div className="grid grid-cols-3 gap-4 mt-5 pt-5 border-t border-coral/10">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-coral">{pets.length}</div>
-            <div className="text-xs text-neutral-600 mt-0.5">Pets</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-emerald-600">{bookingCounts.active}</div>
-            <div className="text-xs text-neutral-600 mt-0.5">Active Bookings</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-amber-600">{reminders.length}</div>
-            <div className="text-xs text-neutral-600 mt-0.5">Reminders</div>
-          </div>
+        <div className="flex flex-wrap gap-3">
+          <Link href="/forms/customer-booking">
+            <Button>Book a Service</Button>
+          </Link>
+          <Link href="#pets-section">
+            <Button variant="secondary">View Your Pets</Button>
+          </Link>
         </div>
       </div>
 
       {/* ===== OVERVIEW VIEW ===== */}
       {view === 'overview' && (
         <>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start">
-            {/* LEFT: PETS + BOOKINGS (8 COLS) */}
-            <div className="space-y-4 lg:col-span-8">
-              <section className="rounded-2xl border border-neutral-200/40 bg-white p-4 shadow-sm sm:p-5">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-neutral-950">Your Pets</h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreatePetModal(true)}
-                    className="rounded-lg bg-coral px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30"
-                  >
-                    + Add Pet
-                  </button>
-                </div>
-
-                {pets.length === 0 ? (
-                  <div className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">🐾</span>
-                      <div>
-                        <p className="text-sm font-semibold text-neutral-900">No pets added yet</p>
-                        <p className="text-xs text-neutral-600">Create a profile to start managing care.</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowCreatePetModal(true)}
-                      className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                    >
-                      Create
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {pets.map((pet) => {
-                      const completion = petCompletions[pet.id] ?? 0;
-                      const completionStatus = completion === 100 ? 'complete' : completion >= 70 ? 'high' : completion >= 40 ? 'medium' : 'low';
-                      const statusConfig = {
-                        complete: { label: 'Complete', color: 'text-emerald-600', progress: 'bg-emerald-500' },
-                        high: { label: 'Almost there', color: 'text-blue-600', progress: 'bg-blue-500' },
-                        medium: { label: 'In progress', color: 'text-amber-600', progress: 'bg-amber-500' },
-                        low: { label: 'Getting started', color: 'text-neutral-600', progress: 'bg-neutral-400' },
-                      };
-                      const status = statusConfig[completionStatus];
-
-                      return (
-                        <div
-                          key={pet.id}
-                          className="flex items-center gap-3 rounded-xl border border-neutral-200/40 bg-white p-4 shadow-sm"
-                        >
-                          <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">
-                            {pet.photo_url ? (
-                              <StorageBackedImage
-                                value={pet.photo_url}
-                                bucket="pet-photos"
-                                alt={`${pet.name} photo`}
-                                width={128}
-                                height={128}
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-xl">{getPetFallbackIcon(pet.breed)}</div>
-                            )}
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-neutral-950">{pet.name}</p>
-                                <p className="truncate text-xs text-neutral-600">{pet.breed || 'Breed not set'}</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className={`text-xs font-semibold ${status.color}`}>{status.label}</span>
-                                <span className="text-xs font-semibold text-neutral-700">{completion}%</span>
-                              </div>
-                            </div>
-
-                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                              <div className={`h-full rounded-full ${status.progress}`} style={{ width: `${completion}%` }} />
-                            </div>
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => openViewModal(pet.id)}
-                              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                            >
-                              View
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(pet)}
-                              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deletePetProfile(pet.id, pet.name)}
-                              disabled={isPending}
-                              className="rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-xs text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-60"
-                              aria-label={`Delete ${pet.name}`}
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-
-              <section className="rounded-2xl border border-neutral-200/40 bg-white p-4 shadow-sm sm:p-5">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-neutral-950">Recent Bookings</h2>
-                  <Link href="/dashboard/user?view=operations" className="text-xs font-semibold text-orange-600 hover:text-orange-700">
-                    View All
-                  </Link>
-                </div>
-
-                {filteredBookings.length === 0 ? (
-                  <div className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">📅</span>
-                      <div>
-                        <p className="text-sm font-semibold text-neutral-900">No bookings yet</p>
-                        <p className="text-xs text-neutral-600">Book a service to see upcoming appointments.</p>
-                      </div>
-                    </div>
-                    <Link href="/forms/customer-booking">
-                      <Button size="sm">Book</Button>
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-200/50 bg-white">
-                    {filteredBookings.slice(0, 5).map((booking) => {
-                      const bookingStatus = booking.status;
-                      const statusClasses: Record<string, string> = {
-                        pending: 'bg-amber-50 text-amber-700',
-                        confirmed: 'bg-blue-50 text-blue-700',
-                        completed: 'bg-emerald-50 text-emerald-700',
-                        cancelled: 'bg-red-50 text-red-700',
-                        no_show: 'bg-neutral-100 text-neutral-700',
-                      };
-
-                      return (
-                        <div key={booking.id} className="flex flex-wrap items-center gap-2 px-4 py-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-neutral-900">{booking.service_type ?? 'Service'}</p>
-                            <p className="text-xs text-neutral-600">
-                              {booking.booking_date ?? new Date(booking.booking_start).toLocaleDateString()}
-                              {booking.start_time ? ` • ${booking.start_time}` : ''}
-                              {booking.end_time ? ` - ${booking.end_time}` : ''}
-                            </p>
-                          </div>
-                          <span className={`rounded-full px-2 py-1 text-[11px] font-semibold capitalize ${statusClasses[bookingStatus]}`}>
-                            {bookingStatus.replace('_', ' ')}
-                          </span>
-                          {(bookingStatus === 'pending' || bookingStatus === 'confirmed') && (
-                            <button
-                              type="button"
-                              onClick={() => cancelBooking(booking.id)}
-                              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
+          {/* STATS SUMMARY ROW */}
+          <section className="space-y-6">
+            <h2 className="text-section-title">Your Bookings at a Glance</h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                icon="📊"
+                label="Active Bookings"
+                value={bookingCounts.active}
+                trend={bookingCounts.active > 0 ? 'up' : 'neutral'}
+              />
+              <StatCard
+                icon="✓"
+                label="Completed"
+                value={bookings.filter((b) => b.status === 'completed').length}
+                trend="neutral"
+              />
+              <StatCard
+                icon="⚠"
+                label="No Shows"
+                value={bookings.filter((b) => b.status === 'no_show').length}
+                trend={bookings.filter((b) => b.status === 'no_show').length > 0 ? 'down' : 'neutral'}
+              />
+              <StatCard
+                icon="📅"
+                label="Total Bookings"
+                value={bookingCounts.total}
+                trend="neutral"
+              />
             </div>
+          </section>
 
-            {/* RIGHT: VACCINE SIDEBAR (4 COLS) */}
-            <aside className="lg:col-span-4">
-              <section className="rounded-2xl border border-neutral-200/40 bg-white p-4 shadow-sm sm:p-5">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h2 className="text-base font-bold text-neutral-950">Upcoming Vaccines</h2>
-                  <span className="text-xs text-neutral-500">{reminderPreferences.daysAhead} days</span>
-                </div>
+          {/* ACTIVITY FEED */}
+          <section className="space-y-6">
+            <h2 className="text-section-title">Recent Activity</h2>
+            <Card>
+              <ActivityFeed
+                items={activityItems}
+                emptyMessage="No recent notifications"
+              />
+            </Card>
+          </section>
 
-                <div className="mb-3 rounded-xl bg-neutral-50 p-3">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-medium text-neutral-600">Window</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={90}
-                      value={reminderPreferences.daysAhead}
-                      onChange={(event) =>
-                        setReminderPreferences((current) => ({
-                          ...current,
-                          daysAhead: Math.max(1, Math.min(90, Number.parseInt(event.target.value || '7', 10))),
-                        }))
-                      }
-                      className="w-14 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-coral/30"
+          {/* TWO COLUMN LAYOUT: BOOKINGS + PETS */}
+          <div className="grid gap-8 lg:grid-cols-2">
+            {/* LEFT: Bookings Overview */}
+            <section className="space-y-6">
+              <h2 className="text-section-title">Your Bookings</h2>
+              {filteredBookings.length === 0 ? (
+                <EmptyState
+                  icon="📅"
+                  title="No Bookings Yet"
+                  description="Start by booking a service for your pet. Your provider will confirm and manage the appointment."
+                  ctaLabel="Book Your First Service"
+                  ctaHref="/forms/customer-booking"
+                />
+              ) : (
+                <div className="space-y-3">
+                  {filteredBookings.slice(0, 3).map((booking) => (
+                    <BookingCard
+                      key={booking.id}
+                      id={booking.id}
+                      bookingDate={booking.booking_date ?? undefined}
+                      startTime={booking.start_time ?? undefined}
+                      endTime={booking.end_time ?? undefined}
+                      bookingStart={booking.booking_start}
+                      serviceName={booking.service_type ?? 'Service'}
+                      bookingMode={booking.booking_mode ?? undefined}
+                      status={booking.status}
+                      onCancel={cancelBooking}
                     />
-                    <span className="text-xs text-neutral-500">days</span>
-                    <button
-                      type="button"
-                      onClick={saveReminderPreferences}
-                      className="ml-auto rounded-md bg-coral px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30"
+                  ))}
+                  {bookings.length > 3 && (
+                    <Link
+                      href="/dashboard/user?view=operations"
+                      className="block py-3 text-center text-sm font-semibold text-orange-600 hover:text-orange-700"
                     >
-                      Save
-                    </button>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <label className="flex items-center gap-1 text-[11px] text-neutral-600">
-                      <input
-                        type="checkbox"
-                        checked={reminderPreferences.inAppEnabled}
-                        onChange={(event) => setReminderPreferences((current) => ({ ...current, inAppEnabled: event.target.checked }))}
-                        className="h-3.5 w-3.5 rounded"
-                      />
-                      In-app
-                    </label>
-                    <label className="flex items-center gap-1 text-[11px] text-neutral-600">
-                      <input
-                        type="checkbox"
-                        checked={reminderPreferences.emailEnabled}
-                        onChange={(event) => setReminderPreferences((current) => ({ ...current, emailEnabled: event.target.checked }))}
-                        className="h-3.5 w-3.5 rounded"
-                      />
-                      Email
-                    </label>
-                    <label className="flex items-center gap-1 text-[11px] text-neutral-600">
-                      <input
-                        type="checkbox"
-                        checked={reminderPreferences.whatsappEnabled}
-                        onChange={(event) => setReminderPreferences((current) => ({ ...current, whatsappEnabled: event.target.checked }))}
-                        className="h-3.5 w-3.5 rounded"
-                      />
-                      WhatsApp
-                    </label>
-                  </div>
+                      View All Bookings →
+                    </Link>
+                  )}
                 </div>
+              )}
+            </section>
 
-                {reminders.length === 0 ? (
-                  <div className="rounded-xl bg-neutral-50 px-3 py-3">
-                    <p className="text-sm font-semibold text-neutral-800">No upcoming reminders</p>
-                    <p className="text-xs text-neutral-600">Due vaccines appear here.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {reminders.map((group) => (
-                      <div key={group.petId} className="rounded-xl border border-neutral-200/50 bg-white p-3 shadow-sm">
-                        <p className="mb-1 text-xs font-semibold text-neutral-900">{group.petName}</p>
-                        <div className="space-y-1.5">
-                          {group.vaccinations.map((vax) => (
-                            <div key={vax.vaccinationId} className="flex items-center justify-between gap-2">
-                              <span className="truncate text-xs text-neutral-700">{vax.vaccineName}</span>
-                              <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                                {new Date(vax.nextDueDate).toLocaleDateString()}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </aside>
+            {/* RIGHT: Pet Profiles Overview */}
+            <section id="pets-section" className="space-y-6">
+              <h2 className="text-section-title">Your Pets</h2>
+              {pets.length === 0 ? (
+                <EmptyState
+                  icon="🐾"
+                  title="No Pets Yet"
+                  description="Add your first pet to get started. Create a complete passport with medical and behavioral info."
+                  ctaLabel="Add Your First Pet"
+                  ctaHref="/dashboard/user/pets"
+                />
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {pets.slice(0, 2).map((pet) => (
+                    <PetCard
+                      key={pet.id}
+                      id={pet.id}
+                      name={pet.name}
+                      breed={pet.breed ?? undefined}
+                      age={pet.age ?? undefined}
+                      photo={petPhotoUrls[pet.id]}
+                      completionPercent={petCompletionById[pet.id]}
+                    />
+                  ))}
+                  {pets.length > 2 && (
+                    <Card className="flex items-center justify-center">
+                      <Link href="/dashboard/user/pets">
+                        <Button variant="ghost">View All Pets →</Button>
+                      </Link>
+                    </Card>
+                  )}
+                </div>
+              )}
+            </section>
           </div>
 
+          {/* UPCOMING VACCINE REMINDERS */}
+          <section className="space-y-6">
+            <SectionCard title={`Upcoming Vaccine Reminders (${reminderPreferences.daysAhead} days)`} description="Choose channels and reminder window for upcoming due dates.">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <FormField
+                  label="Window (days)"
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={String(reminderPreferences.daysAhead)}
+                  onChange={(event) =>
+                    setReminderPreferences((current) => ({
+                      ...current,
+                      daysAhead: Math.max(1, Math.min(90, Number.parseInt(event.target.value || '7', 10))),
+                    }))
+                  }
+                  className="lg:col-span-2"
+                />
+                <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={reminderPreferences.inAppEnabled} onChange={(event) => setReminderPreferences((current) => ({ ...current, inAppEnabled: event.target.checked }))} /> In-app</label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={reminderPreferences.emailEnabled} onChange={(event) => setReminderPreferences((current) => ({ ...current, emailEnabled: event.target.checked }))} /> Email</label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-200/60 bg-white px-3 py-3 text-sm text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm"><input type="checkbox" checked={reminderPreferences.whatsappEnabled} onChange={(event) => setReminderPreferences((current) => ({ ...current, whatsappEnabled: event.target.checked }))} /> WhatsApp</label>
+              </div>
 
+              <button type="button" onClick={saveReminderPreferences} className="w-fit rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1">Save Reminder Preferences</button>
+
+              {reminders.length === 0 ? (
+                <div className="rounded-xl border border-neutral-200/60 bg-neutral-50 p-6 text-center">
+                  <p className="text-sm text-neutral-600">No upcoming reminders. Your due vaccinations will appear here when dates are within the selected window.</p>
+                </div>
+              ) : (
+                <ul className="grid gap-3">
+                  {reminders.map((group) => (
+                    <li key={group.petId} className="rounded-2xl border border-neutral-200/60 bg-white p-4 shadow-sm transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md">
+                      <div className="font-semibold text-neutral-900">{group.petName}</div>
+                      <div className="mt-1 text-sm text-neutral-600">
+                        {group.vaccinations.map((vax) => `${vax.vaccineName} (${new Date(vax.nextDueDate).toLocaleDateString()})`).join(' • ')}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SectionCard>
+          </section>
         </>
       )}
-
-      {/* ===== MODALS ===== */}
-      {/* View Pet Passport Modal */}
-      <PetPassportViewModal
-        isOpen={showViewModal}
-        onClose={() => setShowViewModal(false)}
-        data={viewModalData}
-        photoUrl={viewModalData?.pet?.photo_url ?? null}
-        isLoading={isLoadingViewData}
-      />
-
-      {/* Edit Pet Modal - Full Passport Editor */}
-      <PetFullEditModal
-        isOpen={showEditModal}
-        onClose={() => setShowEditModal(false)}
-        pet={editingPet}
-        photoUrl={editingPetPhotoUrl}
-        onSave={(updatedPet) => {
-          setPets((current) =>
-            current.map((p) => (p.id === updatedPet.id ? { ...p, ...updatedPet } : p))
-          );
-          // Reload completion
-          loadCompletion(updatedPet.id);
-        }}
-      />
-
-      {/* Create Pet Modal */}
-      <Modal
-        isOpen={showCreatePetModal}
-        onClose={closeCreatePetModal}
-        title="Add New Pet"
-        description="Start with essential details. You can complete the full passport later."
-        size="lg"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
-            <div className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-white">
-              {newPetPhotoPreview ? (
-                <Image src={newPetPhotoPreview} alt="New pet preview" fill className="object-cover" unoptimized />
-              ) : (
-                <span className="text-lg">{getPetFallbackIcon(newPet.breed)}</span>
-              )}
-            </div>
-            <label className="cursor-pointer rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50">
-              {newPetPhotoFile ? `Selected: ${newPetPhotoFile.name}` : 'Upload pet profile photo'}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  setNewPetPhotoFile(file);
-
-                  if (newPetPhotoPreview?.startsWith('blob:')) {
-                    URL.revokeObjectURL(newPetPhotoPreview);
-                  }
-
-                  if (!file) {
-                    setNewPetPhotoPreview(null);
-                    return;
-                  }
-
-                  const objectUrl = URL.createObjectURL(file);
-                  setNewPetPhotoPreview(objectUrl);
-                }}
-              />
-            </label>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <FormField
-              label="Pet name"
-              value={newPet.name}
-              onChange={(event) => setNewPet((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Pet name *"
-            />
-            <FormField
-              label="Breed"
-              value={newPet.breed}
-              onChange={(event) => setNewPet((current) => ({ ...current, breed: event.target.value }))}
-              placeholder="e.g., Dog, Cat"
-            />
-            <FormField
-              label="Date of birth"
-              type="date"
-              value={newPet.dateOfBirth}
-              onChange={(event) => setNewPet((current) => ({ ...current, dateOfBirth: event.target.value }))}
-              placeholder="Date of birth"
-            />
-            <FormField
-              label="Gender"
-              value={newPet.gender}
-              onChange={(event) => setNewPet((current) => ({ ...current, gender: event.target.value }))}
-              placeholder="Gender"
-            />
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={createPetProfile}
-              disabled={isPending}
-              className="flex-1 rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:-translate-y-0.5 hover:bg-[#cf8448] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30 focus-visible:ring-offset-1 disabled:opacity-60"
-            >
-              {isPending ? 'Creating...' : 'Create Pet'}
-            </button>
-            <button
-              type="button"
-              onClick={closeCreatePetModal}
-              className="rounded-xl border border-neutral-200/70 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 focus-visible:ring-offset-1"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </Modal>
 
       {/* ===== OPERATIONS VIEW ===== */}
       {view === 'operations' && (
@@ -918,109 +574,45 @@ export default function UserDashboardClient({
       {/* ===== PROFILE VIEW ===== */}
       {view === 'profile' && (
         <>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-neutral-950">Pet Profiles</h2>
-            <button
-              onClick={() => setShowCreatePetModal(true)}
-              className="rounded-lg bg-coral px-3 py-1.5 text-xs font-semibold text-white transition-all duration-150 ease-out hover:bg-[#cf8448] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30"
-            >
-              + Add Pet
-            </button>
-          </div>
+          <h2 className="text-page-title mb-6">Pet Profiles</h2>
 
           {pets.length === 0 ? (
-            <Card>
-              <div className="text-center py-8">
-                <div className="text-4xl mb-3">🐾</div>
-                <h3 className="text-lg font-bold text-neutral-900 mb-1">No Pets Yet</h3>
-                <p className="text-sm text-neutral-600 mb-4">Create pet profiles with complete information.</p>
-                <button
-                  onClick={() => setShowCreatePetModal(true)}
-                  className="rounded-xl bg-coral px-4 py-2 text-sm font-semibold text-white transition-all duration-150 ease-out hover:bg-[#cf8448] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-coral/30"
-                >
-                  Add Your First Pet
-                </button>
-              </div>
-            </Card>
+            <EmptyState
+              icon="🐾"
+              title="No Pets Yet"
+              description="Create pet profiles with complete medical, behavioral, and care information."
+              ctaLabel="Add Your First Pet"
+              ctaHref="/dashboard/user/pets"
+            />
           ) : (
-            <div className="space-y-3">
-              {pets.map((pet) => {
-                const completion = petCompletions[pet.id] ?? 0;
-                const completionStatus = completion === 100 ? 'complete' : completion >= 70 ? 'high' : completion >= 40 ? 'medium' : 'low';
-                const statusConfig = {
-                  complete: { label: 'Complete', color: 'text-emerald-600', progress: 'bg-emerald-500' },
-                  high: { label: 'Almost there', color: 'text-blue-600', progress: 'bg-blue-500' },
-                  medium: { label: 'In progress', color: 'text-amber-600', progress: 'bg-amber-500' },
-                  low: { label: 'Getting started', color: 'text-neutral-600', progress: 'bg-neutral-400' }
-                };
-                const status = statusConfig[completionStatus];
-
-                return (
-                  <div
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {pets.map((pet) => (
+                  <PetCard
                     key={pet.id}
-                    className="flex items-center gap-3 rounded-xl border border-neutral-200/40 bg-white p-4 shadow-sm"
-                  >
-                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-100">
-                      {pet.photo_url ? (
-                        <StorageBackedImage
-                          value={pet.photo_url}
-                          bucket="pet-photos"
-                          alt={`${pet.name} photo`}
-                          width={128}
-                          height={128}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xl">{getPetFallbackIcon(pet.breed)}</div>
-                      )}
-                    </div>
+                    id={pet.id}
+                    name={pet.name}
+                    breed={pet.breed ?? undefined}
+                    age={pet.age ?? undefined}
+                    photo={petPhotoUrls[pet.id]}
+                    completionPercent={petCompletionById[pet.id]}
+                  />
+                ))}
+              </div>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-neutral-950">{pet.name}</p>
-                          <p className="truncate text-xs text-neutral-600">{pet.breed || 'Breed not set'}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-semibold ${status.color}`}>{status.label}</span>
-                          <span className="text-xs font-semibold text-neutral-700">{completion}%</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                        <div className={`h-full rounded-full ${status.progress}`} style={{ width: `${completion}%` }} />
-                      </div>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => openViewModal(pet.id)}
-                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                      >
-                        View
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEditModal(pet)}
-                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deletePetProfile(pet.id, pet.name)}
-                        disabled={isPending}
-                        className="rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-xs text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-60"
-                        aria-label={`Delete ${pet.name}`}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+              {/* Add Pet CTA */}
+              <Card>
+                <div className="text-center space-y-4">
+                  <h3 className="text-card-title">Add Another Pet?</h3>
+                  <p className="text-body text-neutral-600">
+                    Create a complete passport with all medical and behavioral information.
+                  </p>
+                  <Link href="/dashboard/user/pets">
+                    <Button size="lg">Add New Pet</Button>
+                  </Link>
+                </div>
+              </Card>
+            </>
           )}
         </>
       )}

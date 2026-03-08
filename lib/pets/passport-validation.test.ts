@@ -52,8 +52,7 @@ describe('validateVaccinationPatch', () => {
     const error = validateVaccinationPatch([
       {
         _delete: true,
-        vaccineName: 'Rabies',
-        administeredDate: '2026-03-10',
+        id: 'vacc-1',
       },
       {
         vaccineName: 'Distemper',

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import ContentPageLayout from '@/components/ContentPageLayout';
 import FadeInSection from '@/components/FadeInSection';
 import PremiumUserBookingFlow from '@/components/forms/PremiumUserBookingFlow';
-import CustomerBookingFlow from '@/components/forms/CustomerBookingFlow';
+import AdminBookingFlow from '@/components/forms/AdminBookingFlow';
 import { getCurrentUserRole, requireAuthenticatedUser } from '@/lib/auth/session';
 
 export default async function CustomerBookingFormPage() {
@@ -42,7 +42,7 @@ export default async function CustomerBookingFormPage() {
         <div id="booking-form" className="overflow-hidden rounded-2xl border border-neutral-200/60 bg-white shadow-sm">
           <div className="p-4 md:p-6">
             {isStaffBooking ? (
-              <CustomerBookingFlow allowBookForUsers={true} />
+              <AdminBookingFlow />
             ) : (
               <PremiumUserBookingFlow />
             )}

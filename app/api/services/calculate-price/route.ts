@@ -1,12 +1,10 @@
 /**
  * POST /api/services/calculate-price
- * Calculate booking price based on service/package and add-ons
+ * Calculate booking price for service bookings and add-ons
  *
  * Body:
  * {
- *   bookingType: 'service' | 'package'
- *   serviceId?: string
- *   packageId?: string
+ *   serviceId: string
  *   providerId: string
  *   addOns?: Array<{ id: string, quantity: number }>
  * }
@@ -38,9 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     const pricing = await calculateBookingPrice({
-      bookingType: parsed.data.bookingType,
       serviceId: parsed.data.serviceId,
-      packageId: parsed.data.packageId,
       providerId: parsed.data.providerId,
       addOns: parsed.data.addOns,
     });

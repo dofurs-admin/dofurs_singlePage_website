@@ -11,15 +11,18 @@ export async function uploadCompressedImage(file: File, bucket: BucketName) {
   const {
     data: { session },
   } = await supabase.auth.getSession();
-  const authHeader = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+  const requestHeaders = new Headers({
+    'Content-Type': 'application/json',
+  });
+
+  if (session?.access_token) {
+    requestHeaders.set('Authorization', `Bearer ${session.access_token}`);
+  }
 
   const signedUploadResponse = await fetch('/api/storage/signed-upload-url', {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeader,
-    },
+    headers: requestHeaders,
     body: JSON.stringify({ bucket, fileName: compressed.name }),
   });
 
@@ -46,10 +49,7 @@ export async function uploadCompressedImage(file: File, bucket: BucketName) {
   const readResponse = await fetch('/api/storage/signed-read-url', {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeader,
-    },
+    headers: requestHeaders,
     body: JSON.stringify({ bucket, path: signedData.path, expiresIn: 3600 }),
   });
 

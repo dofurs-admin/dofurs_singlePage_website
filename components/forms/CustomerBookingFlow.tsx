@@ -5,7 +5,6 @@ import dynamic from 'next/dynamic';
 import { useToast } from '@/components/ui/ToastProvider';
 import AsyncState from '@/components/ui/AsyncState';
 import LoadingSkeleton from '@/components/ui/LoadingSkeleton';
-import type { ServiceCategory, ServicePackage } from '@/lib/service-catalog/types';
 import type { PricingBreakdown } from '@/lib/bookings/types';
 import type { FlowState } from '@/lib/flows/contracts';
 import { apiRequest } from '@/lib/api/client';
@@ -61,8 +60,6 @@ type ServiceAddon = {
   price: number;
 };
 
-type BookingType = 'service' | 'package';
-
 type BookingCreateResponse = {
   success: boolean;
   booking: { id: number };
@@ -99,9 +96,6 @@ type BookingCreatePayload = {
   bookingUserId?: string;
   discountCode?: string;
   providerServiceId?: string | null;
-  packageId?: string | null;
-  discountAmount?: number;
-  finalPrice?: number;
   addOns?: Array<{ id: string; quantity: number }>;
 };
 
@@ -159,12 +153,6 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   const { showToast } = useToast();
   const showBookForUsers = allowBookForUsers || canBookForUsers;
 
-  // New state for package support
-  const [bookingType, setBookingType] = useState<BookingType>('service');
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [packages, setPackages] = useState<ServicePackage[]>([]);
-  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [priceCalculation, setPriceCalculation] = useState<PricingBreakdown | null>(null);
   const [isCalculatingPrice, setIsCalculatingPrice] = useState(false);
   const [serviceAddOns, setServiceAddOns] = useState<ServiceAddon[]>([]);
@@ -282,42 +270,6 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     };
   }, [selectedBookingUserId, showToast]);
 
-  // Load categories and packages
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadCategoriesAndPackages() {
-      try {
-        const [categoriesRes, packagesRes] = await Promise.all([
-          fetch('/api/services/categories', { cache: 'no-store' }),
-          fetch('/api/services/packages', { cache: 'no-store' }),
-        ]);
-
-        if (!categoriesRes.ok || !packagesRes.ok) {
-          return;
-        }
-
-        const [categoriesData, packagesData] = await Promise.all([
-          categoriesRes.json(),
-          packagesRes.json(),
-        ]);
-
-        if (isMounted) {
-          setCategories(categoriesData.data ?? []);
-          setPackages(packagesData.data ?? []);
-        }
-      } catch {
-        // Silently fail - categories/packages are optional
-      }
-    }
-
-    loadCategoriesAndPackages();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   const providerServices = useMemo(
     () => services.filter((service) => service.provider_id === providerId && service.source === 'provider_services'),
     [services, providerId],
@@ -378,17 +330,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     return Array.from(unique.values());
   }, [slots, bookingDate]);
 
-  const selectedPackageForBooking = useMemo(
-    () => packages.find((pkg) => pkg.id === selectedPackageId) ?? null,
-    [packages, selectedPackageId],
-  );
-
   const controlClassName =
     'h-11 sm:h-12 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm transition focus:border-coral focus:outline-none focus:ring-2 focus:ring-coral/20';
-  const summaryServiceName =
-    bookingType === 'service'
-      ? providerServices.find((service) => service.id === serviceId)?.service_type || 'Not selected'
-      : selectedPackageForBooking?.name || 'Not selected';
+  const summaryServiceName = providerServices.find((service) => service.id === serviceId)?.service_type || 'Not selected';
   const summaryDate = bookingDate || 'Not selected';
   const summaryTime = slotStartTime || 'Not selected';
   const summaryAddress = locationAddress.trim() || 'Not selected';
@@ -405,7 +349,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
   }, [serviceId]);
 
   useEffect(() => {
-    if (!serviceId || bookingType !== 'service') {
+    if (!serviceId) {
       setServiceAddOns([]);
       setSelectedAddOns({});
       return;
@@ -435,7 +379,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     return () => {
       isMounted = false;
     };
-  }, [bookingType, serviceId]);
+  }, [serviceId]);
 
   const discountSuggestions = useMemo(() => {
     const selectedService = services.find((service) => service.id === serviceId);
@@ -526,12 +470,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       return;
     }
 
-    if (bookingType === 'service' && !serviceId) {
-      setPriceCalculation(null);
-      return;
-    }
-
-    if (bookingType === 'package' && !selectedPackageId) {
+    if (!serviceId) {
       setPriceCalculation(null);
       return;
     }
@@ -546,9 +485,8 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       const result = await apiRequest<{ success: boolean; data: PricingBreakdown }>('/api/services/calculate-price', {
         method: 'POST',
         body: JSON.stringify({
-          bookingType,
-          serviceId: bookingType === 'service' ? serviceId : undefined,
-          packageId: bookingType === 'package' ? selectedPackageId : undefined,
+          bookingType: 'service',
+          serviceId,
           providerId: providerId.toString(),
           addOns,
         }),
@@ -561,9 +499,9 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     } finally {
       setIsCalculatingPrice(false);
     }
-  }, [bookingType, providerId, selectedAddOns, selectedPackageId, serviceId, showToast]);
+  }, [providerId, selectedAddOns, serviceId, showToast]);
 
-  // Calculate price when booking type, serviceId, or packageId changes
+  // Recalculate pricing when service selection changes
   useEffect(() => {
     void calculatePrice();
   }, [calculatePrice]);
@@ -693,32 +631,18 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
       return;
     }
 
-    if (bookingType === 'service') {
-      const selectedService = services.find((service) => service.id === serviceId);
+    const selectedService = services.find((service) => service.id === serviceId);
 
-      if (!serviceId || !selectedService) {
-        setFlowState('collecting');
-        showToast('Select a service.', 'error');
-        return;
-      }
+    if (!serviceId || !selectedService) {
+      setFlowState('collecting');
+      showToast('Select a service.', 'error');
+      return;
+    }
 
-      if (selectedService.source !== 'provider_services') {
-        setFlowState('error');
-        showToast('This service is not yet available for the upgraded booking flow.', 'error');
-        return;
-      }
-    } else if (bookingType === 'package') {
-      if (!selectedPackageId) {
-        setFlowState('collecting');
-        showToast('Select a package.', 'error');
-        return;
-      }
-
-      if (!priceCalculation) {
-        setFlowState('collecting');
-        showToast('Price calculation required before booking.', 'error');
-        return;
-      }
+    if (selectedService.source !== 'provider_services') {
+      setFlowState('error');
+      showToast('This service is not yet available for the upgraded booking flow.', 'error');
+      return;
     }
 
     if (bookingMode === 'home_visit') {
@@ -748,18 +672,12 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           .map(([id, quantity]) => ({ id, quantity })),
       };
 
-      if (bookingType === 'service') {
-        basePayload.providerServiceId = serviceId;
-      } else if (bookingType === 'package' && priceCalculation) {
-        basePayload.packageId = selectedPackageId;
-        basePayload.discountAmount = priceCalculation.discount_amount;
-        basePayload.finalPrice = priceCalculation.final_total;
-      }
+      basePayload.providerServiceId = serviceId;
 
       const validationPayload = {
         ...basePayload,
-        bookingType,
-        providerServiceId: bookingType === 'service' ? basePayload.providerServiceId : undefined,
+        bookingType: 'service' as const,
+        providerServiceId: basePayload.providerServiceId,
       };
 
       const clientValidation = bookingCreateSchema.safeParse(validationPayload);
@@ -1214,7 +1132,7 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
     >
       <div className="space-y-4 sm:space-y-5" data-flow-state={flowState}>
       <h3 className="text-lg sm:text-xl font-semibold text-ink">Smart Booking Engine</h3>
-      <p className="mt-1 text-xs sm:text-sm text-neutral-600">Choose user, booking type, service/package, slot, provider, discount, and address.</p>
+      <p className="mt-1 text-xs sm:text-sm text-neutral-600">Choose user, service, slot, provider, discount, and address.</p>
 
       <div className="mt-4 sm:mt-5 grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
       <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
@@ -1296,123 +1214,47 @@ export default function CustomerBookingFlow({ allowBookForUsers = false }: { all
           ))}
         </select>
 
-        <div className="rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm">
-          <p className="mb-2 text-[13px] sm:text-sm font-semibold text-ink">Booking Type</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setBookingType('service');
-                setSelectedPackageId(null);
-                setSelectedCategoryId(null);
-              }}
-              className={`flex-1 rounded-xl border px-3 py-2.5 text-xs sm:text-sm font-medium transition ${
-                bookingType === 'service'
-                  ? 'border-coral/50 bg-orange-50 text-ink'
-                  : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/30'
-              }`}
-            >
-              Service
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setBookingType('package');
-                setServiceId(null);
-              }}
-              className={`flex-1 rounded-xl border px-3 py-2.5 text-xs sm:text-sm font-medium transition ${
-                bookingType === 'package'
-                  ? 'border-coral/50 bg-orange-50 text-ink'
-                  : 'border-neutral-200 bg-white text-neutral-600 hover:border-coral/30'
-              }`}
-            >
-              Package
-            </button>
-          </div>
-        </div>
+        <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm sm:col-span-2">
+          <select
+            value={serviceId ?? ''}
+            onChange={(event) => setServiceId(event.target.value)}
+            className={controlClassName}
+          >
+            {providerServices.length === 0 ? <option value="">No active services</option> : null}
+            {providerServices.map((service) => (
+              <option key={service.id} value={service.id}>
+                {service.service_type} - Rs.{service.base_price}
+              </option>
+            ))}
+          </select>
 
-        {bookingType === 'package' && categories.length > 0 ? (
-          <>
-            <select
-              value={selectedCategoryId ?? ''}
-              onChange={(event) => {
-                setSelectedCategoryId(event.target.value);
-                setSelectedPackageId(null);
-              }}
-              className={controlClassName}
-            >
-              <option value="">Select Category</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-
-            {selectedCategoryId ? (
-              <select
-                value={selectedPackageId ?? ''}
-                onChange={(event) => setSelectedPackageId(event.target.value)}
-                className={controlClassName}
-              >
-                <option value="">Select Package</option>
-                {packages
-                  .filter(
-                    (pkg) => !selectedCategoryId || pkg.category_id === selectedCategoryId
-                  )
-                  .map((pkg) => (
-                    <option key={pkg.id} value={pkg.id}>
-                      {pkg.name} {pkg.discount_type ? `(${pkg.discount_type === 'percentage' ? `${pkg.discount_value}%` : `Rs.${pkg.discount_value}`} off)` : ''}
-                    </option>
-                  ))}
-              </select>
-            ) : null}
-          </>
-        ) : null}
-
-        {bookingType === 'service' ? (
-          <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-3.5 sm:p-4 shadow-sm sm:col-span-2">
-            <select
-              value={serviceId ?? ''}
-              onChange={(event) => setServiceId(event.target.value)}
-              className={controlClassName}
-            >
-              {providerServices.length === 0 ? <option value="">No active services</option> : null}
-              {providerServices.map((service) => (
-                <option key={service.id} value={service.id}>
-                  {service.service_type} - Rs.{service.base_price}
-                </option>
-              ))}
-            </select>
-
-            {serviceAddOns.length > 0 ? (
-              <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 sm:p-3">
-                <p className="text-xs font-semibold text-ink">Add-ons</p>
-                <div className="mt-2 space-y-2">
-                  {serviceAddOns.map((addOn) => (
-                    <label key={addOn.id} className="flex items-center justify-between gap-3 text-xs text-[#6b6b6b]">
-                      <span className="text-ink">{addOn.name} · Rs.{addOn.price}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        value={selectedAddOns[addOn.id] ?? 0}
-                        onChange={(event) => {
-                          const quantity = Number(event.target.value || 0);
-                          setSelectedAddOns((current) => ({
-                            ...current,
-                            [addOn.id]: quantity,
-                          }));
-                        }}
-                        className="h-10 w-20 rounded-lg border border-neutral-200 px-2 py-1 text-xs"
-                      />
-                    </label>
-                  ))}
-                </div>
+          {serviceAddOns.length > 0 ? (
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 sm:p-3">
+              <p className="text-xs font-semibold text-ink">Add-ons</p>
+              <div className="mt-2 space-y-2">
+                {serviceAddOns.map((addOn) => (
+                  <label key={addOn.id} className="flex items-center justify-between gap-3 text-xs text-[#6b6b6b]">
+                    <span className="text-ink">{addOn.name} · Rs.{addOn.price}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={selectedAddOns[addOn.id] ?? 0}
+                      onChange={(event) => {
+                        const quantity = Number(event.target.value || 0);
+                        setSelectedAddOns((current) => ({
+                          ...current,
+                          [addOn.id]: quantity,
+                        }));
+                      }}
+                      className="h-10 w-20 rounded-lg border border-neutral-200 px-2 py-1 text-xs"
+                    />
+                  </label>
+                ))}
               </div>
-            ) : null}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
 
         <select value={petId ?? ''} onChange={(event) => setPetId(Number(event.target.value))} className={controlClassName}>
           {pets.length === 0 ? <option value="">No pets found for selected user</option> : null}

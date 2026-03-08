@@ -74,8 +74,6 @@ export type CreateBookingInput = {
   latitude?: number | null;
   longitude?: number | null;
   providerNotes?: string | null;
-  bookingType?: 'service' | 'package';
-  packageId?: string | null;
   discountCode?: string;
   discountAmount?: number;
   finalPrice?: number;

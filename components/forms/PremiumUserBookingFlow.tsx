@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui/ToastProvider';
 import AsyncState from '@/components/ui/AsyncState';
 import LoadingSkeleton from '@/components/ui/LoadingSkeleton';
-import type { ServiceCategory, ServicePackage } from '@/lib/service-catalog/types';
 import type { PricingBreakdown } from '@/lib/bookings/types';
 import { apiRequest } from '@/lib/api/client';
 import { bookingCreateSchema } from '@/lib/flows/validation';
@@ -56,7 +55,6 @@ type ServiceAddon = {
   name: string;
   price: number;
 };
-type BookingType = 'service' | 'package';
 type BookingCreateResponse = {
   success: boolean;
   booking: { id: number };
@@ -87,9 +85,6 @@ type BookingCreatePayload = {
   bookingUserId?: string;
   discountCode?: string;
   providerServiceId?: string | null;
-  packageId?: string | null;
-  discountAmount?: number;
-  finalPrice?: number;
   addOns?: Array<{ id: string; quantity: number }>;
 };
 
@@ -101,12 +96,9 @@ export default function PremiumUserBookingFlow() {
   const [services, setServices] = useState<Service[]>([]);
   const [pets, setPets] = useState<Pet[]>([]);
   const [discounts, setDiscounts] = useState<CatalogDiscount[]>([]);
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [packages, setPackages] = useState<ServicePackage[]>([]);
 
   // Booking selections
   const [currentStep, setCurrentStep] = useState<BookingStep>('service');
-  const [bookingType, setBookingType] = useState<BookingType>('service');
   const [providerId, setProviderId] = useState<number | null>(null);
   const [selectedAutoProvider, setSelectedAutoProvider] = useState(true);
   const [serviceId, setServiceId] = useState<string | null>(null);
@@ -120,8 +112,6 @@ export default function PremiumUserBookingFlow() {
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedSavedAddressId, setSelectedSavedAddressId] = useState<string | null>(null);
   const [providerNotes, setProviderNotes] = useState('');
-  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
   // Slots and pricing
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -228,40 +218,6 @@ export default function PremiumUserBookingFlow() {
     };
   }, [showToast]);
 
-  // Load categories and packages
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadCategoriesAndPackages() {
-      try {
-        const [categoriesRes, packagesRes] = await Promise.all([
-          fetch('/api/services/categories', { cache: 'no-store' }),
-          fetch('/api/services/packages', { cache: 'no-store' }),
-        ]);
-
-        if (!categoriesRes.ok || !packagesRes.ok) return;
-
-        const [categoriesData, packagesData] = await Promise.all([
-          categoriesRes.json(),
-          packagesRes.json(),
-        ]);
-
-        if (isMounted) {
-          setCategories(categoriesData.data ?? []);
-          setPackages(packagesData.data ?? []);
-        }
-      } catch {
-        // Silently fail - categories/packages are optional
-      }
-    }
-
-    loadCategoriesAndPackages();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   const providerServices = useMemo(
     () => services.filter((service) => service.provider_id === providerId && service.source === 'provider_services'),
     [services, providerId],
@@ -293,7 +249,7 @@ export default function PremiumUserBookingFlow() {
 
   // Load add-ons when service changes
   useEffect(() => {
-    if (!serviceId || bookingType !== 'service') {
+    if (!serviceId) {
       setServiceAddOns([]);
       setSelectedAddOns({});
       return;
@@ -319,7 +275,7 @@ export default function PremiumUserBookingFlow() {
     return () => {
       isMounted = false;
     };
-  }, [bookingType, serviceId]);
+  }, [serviceId]);
 
   // Load slots when date or service changes
   useEffect(() => {
@@ -374,12 +330,7 @@ export default function PremiumUserBookingFlow() {
       return;
     }
 
-    if (bookingType === 'service' && !serviceId) {
-      setPriceCalculation(null);
-      return;
-    }
-
-    if (bookingType === 'package' && !selectedPackageId) {
+    if (!serviceId) {
       setPriceCalculation(null);
       return;
     }
@@ -387,14 +338,18 @@ export default function PremiumUserBookingFlow() {
     let isMounted = true;
 
     async function calculatePrice() {
+      const resolvedProviderId = providerId;
+      if (!resolvedProviderId) {
+        return;
+      }
+
       try {
         const payload = await apiRequest<{ success: boolean; data: PricingBreakdown }>('/api/services/calculate-price', {
           method: 'POST',
           body: JSON.stringify({
-            bookingType,
-            serviceId: bookingType === 'service' ? serviceId : undefined,
-            packageId: bookingType === 'package' ? selectedPackageId : undefined,
-            providerId: providerId.toString(),
+            bookingType: 'service',
+            serviceId,
+            providerId: resolvedProviderId.toString(),
             addOns: Object.entries(selectedAddOns)
               .filter(([, qty]) => qty > 0)
               .map(([id, quantity]) => ({ id, quantity })),
@@ -415,7 +370,7 @@ export default function PremiumUserBookingFlow() {
     return () => {
       isMounted = false;
     };
-  }, [bookingType, providerId, serviceId, selectedPackageId, selectedAddOns]);
+  }, [providerId, serviceId, selectedAddOns]);
 
   // Clear discount when service changes
   useEffect(() => {
@@ -437,12 +392,8 @@ export default function PremiumUserBookingFlow() {
         );
         return;
       }
-      if (bookingType === 'service' && !serviceId) {
+      if (!serviceId) {
         showToast('Please select a service', 'error');
-        return;
-      }
-      if (bookingType === 'package' && !selectedPackageId) {
-        showToast('Please select a package', 'error');
         return;
       }
     }
@@ -531,18 +482,12 @@ export default function PremiumUserBookingFlow() {
           .map(([id, quantity]) => ({ id, quantity })),
       };
 
-      if (bookingType === 'service') {
-        basePayload.providerServiceId = serviceId;
-      } else if (bookingType === 'package' && priceCalculation) {
-        basePayload.packageId = selectedPackageId;
-        basePayload.discountAmount = priceCalculation.discount_amount;
-        basePayload.finalPrice = priceCalculation.final_total;
-      }
+      basePayload.providerServiceId = serviceId;
 
       const validationPayload = {
         ...basePayload,
-        bookingType,
-        providerServiceId: bookingType === 'service' ? basePayload.providerServiceId : undefined,
+        bookingType: 'service' as const,
+        providerServiceId: basePayload.providerServiceId,
       };
 
       const clientValidation = bookingCreateSchema.safeParse(validationPayload);
@@ -604,32 +549,13 @@ export default function PremiumUserBookingFlow() {
             <ServiceSelectionStep
               providers={providers}
               services={providerServices}
-              bookingType={bookingType}
-              categories={categories}
-              packages={packages}
-              selectedCategoryId={selectedCategoryId}
-              selectedPackageId={selectedPackageId}
               selectedProviderId={providerId}
               selectedServiceId={serviceId}
               bookingMode={bookingMode}
               selectedAutoProvider={selectedAutoProvider}
-              onBookingTypeChange={(type) => {
-                setBookingType(type);
-                if (type === 'service') {
-                  setSelectedPackageId(null);
-                  setSelectedCategoryId(null);
-                } else {
-                  setServiceId(null);
-                }
-              }}
               onAutoProviderSelect={setSelectedAutoProvider}
               onBookingModeChange={setBookingMode}
               onProviderChange={setProviderId}
-              onCategoryChange={(categoryId) => {
-                setSelectedCategoryId(categoryId);
-                setSelectedPackageId(null);
-              }}
-              onPackageChange={setSelectedPackageId}
               onServiceChange={setServiceId}
               onNext={handleNextStep}
             />
@@ -672,9 +598,7 @@ export default function PremiumUserBookingFlow() {
 
           {currentStep === 'review' && (
             <ReviewConfirmStep
-              bookingType={bookingType}
               selectedService={services.find((s) => s.id === serviceId)}
-              selectedPackageName={packages.find((pkg) => pkg.id === selectedPackageId)?.name}
               selectedPet={pets.find((p) => p.id === petId)}
               selectedProvider={providers.find((p) => p.id === providerId)}
               bookingDate={bookingDate}
@@ -708,9 +632,7 @@ export default function PremiumUserBookingFlow() {
         {/* Sticky summary sidebar */}
         <BookingSummarySidebar
           step={currentStep}
-          bookingType={bookingType}
           service={services.find((s) => s.id === serviceId)}
-          packageName={packages.find((pkg) => pkg.id === selectedPackageId)?.name}
           pet={pets.find((p) => p.id === petId)}
           provider={providers.find((p) => p.id === providerId)}
           bookingDate={bookingDate}

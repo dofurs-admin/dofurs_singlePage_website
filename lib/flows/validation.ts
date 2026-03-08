@@ -39,14 +39,7 @@ export const serviceBookingCreateSchema = bookingBaseSchema.extend({
   providerServiceId: z.string().uuid(),
 });
 
-export const packageBookingCreateSchema = bookingBaseSchema.extend({
-  bookingType: z.literal('package'),
-  packageId: z.string().uuid(),
-  finalPrice: z.number().min(0).optional(),
-  discountAmount: z.number().min(0).optional(),
-});
-
-export const bookingCreateSchema = z.union([serviceBookingCreateSchema, packageBookingCreateSchema]);
+export const bookingCreateSchema = serviceBookingCreateSchema;
 
 export const bookingStatusUpdateSchema = z.object({
   status: z.enum(['pending', 'confirmed', 'completed', 'cancelled', 'no_show']),

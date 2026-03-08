@@ -9,7 +9,7 @@ export default function PriceBreakdownCard({ price, isLoading }: { price: Pricin
         isLoading={isLoading || false}
         isEmpty={!isLoading && !price}
         loadingFallback={<p className="mt-1 text-xs text-[#6b6b6b]">Calculating...</p>}
-        emptyFallback={<p className="mt-1 text-xs text-[#6b6b6b]">Select service/package to preview price.</p>}
+        emptyFallback={<p className="mt-1 text-xs text-[#6b6b6b]">Select a service to preview price.</p>}
       >
         {price && (
           <div className="mt-2 space-y-1 text-[11px] text-[#6b6b6b]">

@@ -1,7 +1,7 @@
 /**
  * Service Catalog System Types
  * Defines all TypeScript interfaces for the service management system including
- * categories, services, packages, add-ons, and media.
+ * categories, services, add-ons, and media.
  */
 
 // ============================================================================
@@ -69,61 +69,6 @@ export type ServiceInput = Omit<Service, "id" | "created_at" | "updated_at">;
 export type ServiceUpdate = Partial<ServiceInput>;
 
 // ============================================================================
-// SERVICE PACKAGES
-// ============================================================================
-
-export type DiscountType = "percentage" | "fixed";
-
-export interface ServicePackage {
-  id: string;
-  category_id?: string | null;
-  name: string;
-  slug: string;
-  short_description?: string | null;
-  full_description?: string | null;
-  banner_image_url?: string | null;
-  icon_url?: string | null;
-  discount_type?: DiscountType | null;
-  discount_value?: number | null;
-  display_order: number;
-  is_featured: boolean;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export type ServicePackageInput = Omit<
-  ServicePackage,
-  "id" | "created_at" | "updated_at"
->;
-
-export interface PackageService {
-  id: string;
-  package_id: string;
-  provider_service_id: string;
-  sequence_order: number;
-  is_optional: boolean;
-  created_at: string;
-}
-
-export type PackageServiceInput = Omit<PackageService, "id" | "created_at">;
-
-/**
- * Package composition with full service details
- * Used for displaying package contents and calculating prices
- */
-export interface PackageComposition {
-  package: ServicePackage;
-  services: Array<{
-    service: Service;
-    sequence_order: number;
-    is_optional: boolean;
-  }>;
-  totalBasePrice: number; // sum of base_price for all services
-  totalWithDiscount: number; // after applying package discount
-}
-
-// ============================================================================
 // SERVICE ADD-ONS
 // ============================================================================
 
@@ -145,50 +90,6 @@ export type ServiceAddonInput = Omit<
   ServiceAddon,
   "id" | "created_at" | "updated_at"
 >;
-
-// ============================================================================
-// BOOKING EXTENSIONS
-// ============================================================================
-
-/**
- * Extended booking with package and pricing details
- * When booking_type = 'service', use service pricing from provider_services.
- * When booking_type = 'package', use dynamic pricing from package composition.
- */
-export interface BookingWithPackaging {
-  // Existing booking fields
-  id: string;
-  provider_id: string | bigint;
-  user_id: string;
-  service_id?: string | null;
-  booking_type: "service" | "package";
-  status: string;
-  booking_date: string;
-  booking_time: string;
-
-  // New package fields
-  package_id?: string | null;
-  discount_amount?: number | null;
-  final_price?: number | null;
-
-  // Legacy pricing (kept for backward compatibility)
-  price?: number | null;
-  surge_price?: number | null;
-  discount?: number | null;
-
-  created_at: string;
-  updated_at: string;
-}
-
-export type BookingPricingInput = {
-  booking_type: "service" | "package";
-  service_id?: string;
-  package_id?: string;
-  base_price?: number;
-  surge_price?: number;
-  discount_amount?: number;
-  final_price?: number;
-};
 
 // ============================================================================
 // API RESPONSE TYPES
@@ -216,15 +117,13 @@ export interface PaginatedResponse<T> {
 
 /**
  * Admin service management context
- * Provides data for admin dashboard service/category/package/addon management
+ * Provides data for admin dashboard service/category/addon management
  */
 export interface AdminServiceContext {
   categories: ServiceCategory[];
   services: Service[];
-  packages: ServicePackage[];
   selectedCategory?: ServiceCategory | null;
   selectedService?: Service | null;
-  selectedPackage?: ServicePackage | null;
 }
 
 /**
@@ -232,9 +131,9 @@ export interface AdminServiceContext {
  */
 export interface ServiceModerationItem {
   id: string;
-  type: "service" | "category" | "package" | "addon";
+  type: "service" | "category" | "addon";
   status: "pending_approval" | "approved" | "rejected";
   created_at: string;
   submitted_by: string;
-  data: ServiceCategory | Service | ServicePackage | ServiceAddon;
+  data: ServiceCategory | Service | ServiceAddon;
 }

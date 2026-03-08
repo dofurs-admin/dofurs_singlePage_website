@@ -864,7 +864,7 @@ export async function rolloutAdminServiceGlobally(
 
   const providerIdsQuery = supabase
     .from('providers')
-    .select('id, admin_approval_status, account_status')
+    .select('id, provider_type, admin_approval_status, account_status')
     .order('id', { ascending: true })
     .limit(5000);
 
@@ -879,6 +879,25 @@ export async function rolloutAdminServiceGlobally(
       .filter((provider) => provider.admin_approval_status === 'approved' && provider.account_status === 'active')
       .map((provider) => provider.id),
   );
+
+  const normalizedProviderTypes = new Set(
+    (input.provider_types ?? [])
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0),
+  );
+
+  if (normalizedProviderTypes.size > 0) {
+    for (const provider of providers ?? []) {
+      if (!targetProviderIds.has(provider.id)) {
+        continue;
+      }
+
+      const providerType = String(provider.provider_type ?? '').trim().toLowerCase();
+      if (!normalizedProviderTypes.has(providerType)) {
+        targetProviderIds.delete(provider.id);
+      }
+    }
+  }
 
   if (input.provider_ids && input.provider_ids.length > 0) {
     const requested = new Set(input.provider_ids);

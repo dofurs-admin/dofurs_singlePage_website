@@ -2,9 +2,8 @@ import { z } from 'zod';
 
 export const calculatePriceSchema = z
   .object({
-    bookingType: z.enum(['service', 'package']),
-    serviceId: z.string().uuid().optional(),
-    packageId: z.string().uuid().optional(),
+    bookingType: z.literal('service').optional(),
+    serviceId: z.string().uuid(),
     providerId: z.union([z.string().min(1), z.number().int().positive()]),
     addOns: z
       .array(
@@ -16,11 +15,7 @@ export const calculatePriceSchema = z
       .optional(),
   })
   .superRefine((value, context) => {
-    if (value.bookingType === 'service' && !value.serviceId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'serviceId is required for service bookings', path: ['serviceId'] });
-    }
-
-    if (value.bookingType === 'package' && !value.packageId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'packageId is required for package bookings', path: ['packageId'] });
+    if (value.bookingType && value.bookingType !== 'service') {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Only service bookings are supported', path: ['bookingType'] });
     }
   });

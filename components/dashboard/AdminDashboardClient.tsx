@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Image from 'next/image';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/components/ui/ToastProvider';
 import { bookingTimelineLabel } from '@/lib/bookings/timeline';
 import type {
@@ -10,13 +11,13 @@ import type {
   PlatformDiscount,
   PlatformDiscountAnalyticsSummary,
 } from '@/lib/provider-management/types';
-import type { ServiceCategory, ServicePackage, Service } from '@/lib/service-catalog/types';
+import type { ServiceCategory, Service } from '@/lib/service-catalog/types';
 import ServiceCategoriesManager from './admin/ServiceCategoriesManager';
 import ServiceBuilder from './admin/ServiceBuilder';
-import PackageBuilder from './admin/PackageBuilder';
 import ProviderOnboardingModal from './admin/ProviderOnboardingModal';
 import ImageUploadField from '@/components/ui/ImageUploadField';
 import StorageBackedImage from '@/components/ui/StorageBackedImage';
+import Modal from '@/components/ui/Modal';
 import { useAdminBookingRealtime, useAdminProviderApprovalRealtime, useOptimisticUpdate } from '@/lib/hooks/useRealtime';
 
 // Premium Components
@@ -123,7 +124,7 @@ type GlobalServiceRolloutDraft = {
   service_duration_minutes: string;
   is_active: boolean;
   service_pincodes: string;
-  provider_ids: string;
+  provider_types: string[];
   overwrite_existing: boolean;
 };
 
@@ -165,6 +166,15 @@ type ProviderProfileDraft = {
 };
 
 type AdminDashboardView = 'overview' | 'bookings' | 'users' | 'providers' | 'services' | 'access' | 'health';
+type ServiceCatalogPanel = 'types' | 'services';
+
+function parseServiceCatalogPanel(value: string | null): ServiceCatalogPanel {
+  if (value === 'services') {
+    return value;
+  }
+
+  return 'types';
+}
 
 type AdminUserSearchPet = {
   id: string;
@@ -497,7 +507,6 @@ export default function AdminDashboardClient({
   initialDiscounts,
   initialDiscountAnalytics,
   initialServiceCategories = [],
-  initialServicePackages = [],
   initialCatalogServices = [],
 }: {
   canManageUserAccess?: boolean;
@@ -512,9 +521,11 @@ export default function AdminDashboardClient({
   initialDiscounts: PlatformDiscount[];
   initialDiscountAnalytics: PlatformDiscountAnalyticsSummary;
   initialServiceCategories?: ServiceCategory[];
-  initialServicePackages?: ServicePackage[];
   initialCatalogServices?: Service[];
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const providerFallbackRows: AdminProviderModerationItem[] = providers.map((provider) => ({
     id: provider.id,
     name: provider.name,
@@ -597,11 +608,13 @@ export default function AdminDashboardClient({
     service_duration_minutes: '60',
     is_active: true,
     service_pincodes: '',
-    provider_ids: '',
+    provider_types: [],
     overwrite_existing: false,
   });
   const [discounts, setDiscounts] = useState<PlatformDiscount[]>(initialDiscounts);
   const [discountAnalytics, setDiscountAnalytics] = useState<PlatformDiscountAnalyticsSummary>(initialDiscountAnalytics);
+  const [showRolloutConfiguration, setShowRolloutConfiguration] = useState(false);
+  const [showDiscountEditor, setShowDiscountEditor] = useState(false);
   const [locationDraft, setLocationDraft] = useState<Record<number, LocationDraft>>({});
   const [providerProfileDraft, setProviderProfileDraft] = useState<Record<number, ProviderProfileDraft>>({});
   const [locationCoverageWarnings, setLocationCoverageWarnings] = useState<Record<number, string[]>>({});
@@ -627,6 +640,9 @@ export default function AdminDashboardClient({
   const [providerSearchQuery, setProviderSearchQuery] = useState('');
   const [providerTypeFilter, setProviderTypeFilter] = useState<'all' | 'clinic' | 'home_visit'>('all');
   const [providerStatusFilter, setProviderStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'suspended'>('all');
+  const [serviceCatalogPanel, setServiceCatalogPanel] = useState<ServiceCatalogPanel>(
+    parseServiceCatalogPanel(searchParams.get('catalog')),
+  );
   const [schemaSyncHealth, setSchemaSyncHealth] = useState<SchemaSyncHealthResponse | null>(null);
   const [schemaSyncDurationMs, setSchemaSyncDurationMs] = useState<number | null>(null);
   const [isSchemaSyncChecking, setIsSchemaSyncChecking] = useState(false);
@@ -676,6 +692,46 @@ export default function AdminDashboardClient({
     return Array.from(new Set([...catalogServiceTypes, ...summaryServiceTypes])).sort();
   }, [initialCatalogServices, serviceSummary]);
   const defaultServiceType = availableServiceTypes[0] ?? 'grooming_session';
+  const rolloutTargetScopeLabel = useMemo(() => {
+    if (globalServiceDraft.provider_types.length === 0) {
+      return 'Target: All approved active providers';
+    }
+
+    const names = globalServiceDraft.provider_types.map((type) => type.replaceAll('_', ' '));
+
+    if (names.length <= 2) {
+      return `Target: ${names.join(', ')}`;
+    }
+
+    return `Target: ${names.length} provider types selected`;
+  }, [globalServiceDraft.provider_types]);
+  const rolloutProviderTypeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const provider of providerRows) {
+      const providerType = String(provider.provider_type ?? '').trim().toLowerCase();
+      if (!providerType) {
+        continue;
+      }
+
+      counts.set(providerType, (counts.get(providerType) ?? 0) + 1);
+    }
+
+    for (const selectedType of globalServiceDraft.provider_types) {
+      const normalizedType = String(selectedType).trim().toLowerCase();
+      if (!normalizedType) {
+        continue;
+      }
+
+      if (!counts.has(normalizedType)) {
+        counts.set(normalizedType, 0);
+      }
+    }
+
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => a.value.localeCompare(b.value));
+  }, [providerRows, globalServiceDraft.provider_types]);
 
   // Realtime subscriptions for bookings and provider approvals
   const refreshBookings = useCallback(async (searchQuery?: string) => {
@@ -787,6 +843,30 @@ export default function AdminDashboardClient({
   const isProvidersView = view === 'providers';
   const isServicesView = view === 'services';
   const isHealthView = view === 'health';
+
+  useEffect(() => {
+    if (!isServicesView) {
+      return;
+    }
+
+    const nextPanel = parseServiceCatalogPanel(searchParams.get('catalog'));
+    setServiceCatalogPanel((current) => (current === nextPanel ? current : nextPanel));
+  }, [isServicesView, searchParams]);
+
+  function updateServiceCatalogPanel(panel: ServiceCatalogPanel) {
+    setServiceCatalogPanel(panel);
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (panel === 'types') {
+      params.delete('catalog');
+    } else {
+      params.set('catalog', panel);
+    }
+
+    const query = params.toString();
+    const nextUrl = query ? `${pathname}?${query}` : pathname;
+    router.replace(nextUrl, { scroll: false });
+  }
 
   const hasFunctionalRuns = functionalHealthChecks.some((check) => check.status !== 'unknown');
   const functionalHealthIsHealthy = hasFunctionalRuns && functionalHealthChecks.every((check) => check.status === 'healthy');
@@ -1171,7 +1251,7 @@ export default function AdminDashboardClient({
     const typedConfirmation = window.prompt('Type DELETE to confirm provider deletion.');
 
     if (typedConfirmation !== 'DELETE') {
-      showToast('Provider deletion cancelled.', 'warning');
+      showToast('Provider deletion cancelled.', 'error');
       return;
     }
 
@@ -1664,11 +1744,27 @@ export default function AdminDashboardClient({
     });
   }
 
-  function setGlobalServiceDraftField(field: keyof GlobalServiceRolloutDraft, value: string | boolean) {
+  function setGlobalServiceDraftField(field: keyof GlobalServiceRolloutDraft, value: string | boolean | string[]) {
     setGlobalServiceDraft((current) => ({
       ...current,
       [field]: value,
     }));
+  }
+
+  function toggleGlobalRolloutProviderType(providerType: string, checked: boolean) {
+    setGlobalServiceDraft((current) => {
+      const next = new Set(current.provider_types);
+      if (checked) {
+        next.add(providerType);
+      } else {
+        next.delete(providerType);
+      }
+
+      return {
+        ...current,
+        provider_types: Array.from(next),
+      };
+    });
   }
 
   function setServiceActivation(serviceType: string, isActive: boolean) {
@@ -1739,10 +1835,9 @@ export default function AdminDashboardClient({
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
 
-    const providerIds = globalServiceDraft.provider_ids
-      .split(',')
-      .map((value) => Number(value.trim()))
-      .filter((value) => Number.isInteger(value) && value > 0);
+    const providerTypes = globalServiceDraft.provider_types
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
 
     startTransition(async () => {
       try {
@@ -1758,13 +1853,14 @@ export default function AdminDashboardClient({
               service_duration_minutes: serviceDuration,
               is_active: true,
               service_pincodes: servicePincodes,
-              provider_ids: providerIds.length > 0 ? providerIds : undefined,
+              provider_types: providerTypes.length > 0 ? providerTypes : undefined,
               overwrite_existing: globalServiceDraft.overwrite_existing,
             }),
           },
         );
 
         setServiceSummary(response.summary);
+        setShowRolloutConfiguration(false);
         showToast('Global service rollout completed.', 'success');
       } catch (error) {
         showToast(error instanceof Error ? error.message : 'Unable to rollout service globally.', 'error');
@@ -1792,6 +1888,7 @@ export default function AdminDashboardClient({
   }
 
   function loadDiscountInDraft(discount: PlatformDiscount) {
+    setShowDiscountEditor(true);
     setDiscountDraft({
       id: discount.id,
       code: discount.code,
@@ -1901,6 +1998,7 @@ export default function AdminDashboardClient({
         await refreshDiscountModeration();
 
         resetDiscountDraft();
+        setShowDiscountEditor(false);
         showToast('Discount saved.', 'success');
       } catch (error) {
         showToast(error instanceof Error ? error.message : 'Unable to save discount.', 'error');
@@ -1935,6 +2033,7 @@ export default function AdminDashboardClient({
         setDiscounts((current) => current.filter((item) => item.id !== discountId));
         if (discountDraft.id === discountId) {
           resetDiscountDraft();
+          setShowDiscountEditor(false);
         }
         await refreshDiscountModeration();
         showToast('Discount deleted.', 'success');
@@ -2533,18 +2632,51 @@ export default function AdminDashboardClient({
       ) : null}
 
       {isServicesView ? (
-        <>
-          <ServiceCategoriesManager initialCategories={initialServiceCategories} />
-          <ServiceBuilder
-            initialServices={initialCatalogServices}
-            categories={initialServiceCategories}
-          />
-          <PackageBuilder
-            initialPackages={initialServicePackages}
-            categories={initialServiceCategories}
-            providers={providers}
-          />
-        </>
+        <section className="space-y-4">
+          <div className="rounded-2xl border border-neutral-200/60 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-neutral-950">Catalog Builders</h2>
+                <p className="text-xs text-neutral-600">Select one section to edit at a time.</p>
+              </div>
+              <div className="inline-flex rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-1">
+                <button
+                  type="button"
+                  onClick={() => updateServiceCatalogPanel('types')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    serviceCatalogPanel === 'types'
+                      ? 'bg-white text-coral shadow-sm'
+                      : 'text-ink/80 hover:text-coral'
+                  }`}
+                >
+                  Service Types
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateServiceCatalogPanel('services')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    serviceCatalogPanel === 'services'
+                      ? 'bg-white text-coral shadow-sm'
+                      : 'text-ink/80 hover:text-coral'
+                  }`}
+                >
+                  Services
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {serviceCatalogPanel === 'types' ? (
+            <ServiceCategoriesManager initialCategories={initialServiceCategories} />
+          ) : null}
+
+          {serviceCatalogPanel === 'services' ? (
+            <ServiceBuilder
+              initialServices={initialCatalogServices}
+              categories={initialServiceCategories}
+            />
+          ) : null}
+        </section>
       ) : null}
 
       {canManageUserAccess && isAccessView ? (
@@ -3421,14 +3553,31 @@ export default function AdminDashboardClient({
                         <p className="text-sm text-neutral-600">
                           Type: <span className="font-medium capitalize">{provider.provider_type.replace(/_/g, ' ')}</span> •
                           {' '}Approval: <span className="font-medium capitalize">{provider.admin_approval_status}</span> •
-                          {' '}Account: <span className="font-medium capitalize">{provider.account_status}</span>
+                          {' '}Account:{' '}
+                          <span
+                            className={cn(
+                              'font-medium capitalize',
+                              provider.account_status === 'active'
+                                ? 'text-green-700'
+                                : 'text-red-700',
+                            )}
+                          >
+                            {provider.account_status}
+                          </span>
                         </p>
                         <p className="text-xs text-neutral-500">
                           Documents → Pending: {provider.documentCounts.pending} | Approved: {provider.documentCounts.approved} | Rejected: {provider.documentCounts.rejected}
                         </p>
                         {isProviderDetailsLoaded && providerServicesRows.length > 0 && (
                           <p className="text-xs text-neutral-500">
-                            Services: {providerServicesRows.filter(s => s.is_active).length} active, {providerServicesRows.filter(s => !s.is_active).length} inactive
+                            Services:{' '}
+                            <span className="font-medium text-green-700">
+                              {providerServicesRows.filter(s => s.is_active).length} active
+                            </span>
+                            ,{' '}
+                            <span className="font-medium text-red-700">
+                              {providerServicesRows.filter(s => !s.is_active).length} inactive
+                            </span>
                           </p>
                         )}
                       </div>
@@ -3453,6 +3602,7 @@ export default function AdminDashboardClient({
                           variant={provider.account_status === 'active' ? 'danger' : 'secondary'}
                           onClick={() => moderateProvider(provider.id, provider.account_status === 'active' ? 'disable' : 'enable')}
                           disabled={isPending}
+                          className={provider.account_status === 'active' ? '' : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'}
                         >
                           {provider.account_status === 'active' ? 'Disable' : 'Enable'}
                         </Button>
@@ -3480,16 +3630,18 @@ export default function AdminDashboardClient({
                             variant="secondary"
                             onClick={() => toggleProviderServices(provider.id, true)}
                             disabled={isPending || providerServicesRows.every(s => s.is_active)}
+                            className="border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
                           >
-                            🟢 Enable All Services
+                            Enable All Services
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
                             onClick={() => toggleProviderServices(provider.id, false)}
                             disabled={isPending || providerServicesRows.every(s => !s.is_active)}
+                            className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
                           >
-                            🔴 Disable All Services
+                            Disable All Services
                           </Button>
                         </div>
                       )}
@@ -3728,13 +3880,18 @@ export default function AdminDashboardClient({
                             <span>
                               {weekdayLabel(slot.day_of_week)} • {slot.start_time} - {slot.end_time}
                             </span>
-                            <label className="inline-flex items-center gap-1">
+                            <label
+                              className={cn(
+                                'inline-flex items-center gap-1 font-medium',
+                                slot.is_available ? 'text-green-700' : 'text-red-700',
+                              )}
+                            >
                               <input
                                 type="checkbox"
                                 checked={slot.is_available}
                                 onChange={(event) => toggleAvailabilitySlot(provider.id, slot.id, event.target.checked)}
                               />
-                              Enabled
+                              {slot.is_available ? 'Enabled' : 'Disabled'}
                             </label>
                           </li>
                         ))}
@@ -3791,10 +3948,10 @@ export default function AdminDashboardClient({
                         <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
                           Total: {providerServicesRows.length}
                         </span>
-                        <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+                        <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
                           Active: {providerServicesRows.filter((item) => item.is_active).length}
                         </span>
-                        <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+                        <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
                           Disabled: {providerServicesRows.filter((item) => !item.is_active).length}
                         </span>
                       </div>
@@ -3826,7 +3983,7 @@ export default function AdminDashboardClient({
                                     'rounded-full border px-2 py-0.5 text-[10px] font-semibold',
                                     service.is_active
                                       ? 'border-green-300 bg-green-100 text-green-700'
-                                      : 'border-neutral-300 bg-neutral-100 text-neutral-600',
+                                      : 'border-red-300 bg-red-100 text-red-700',
                                   )}
                                 >
                                   {service.is_active ? 'Active' : 'Disabled'}
@@ -3967,8 +4124,9 @@ export default function AdminDashboardClient({
                 <li key={service.service_type} className="rounded-lg border border-neutral-200/60 p-2 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="font-medium text-neutral-950">
-                      {service.service_type} • Providers: {service.provider_count} • Active: {service.active_count} • Inactive:{' '}
-                      {service.inactive_count} • Avg Price: ₹{service.average_base_price}
+                      {service.service_type} • Providers: {service.provider_count} • Active:{' '}
+                      <span className="text-green-700">{service.active_count}</span> • Inactive:{' '}
+                      <span className="text-red-700">{service.inactive_count}</span> • Avg Price: ₹{service.average_base_price}
                     </p>
                     <div className="flex gap-2">
                       <Button
@@ -3977,6 +4135,7 @@ export default function AdminDashboardClient({
                         disabled={isPending}
                         variant="secondary"
                         size="sm"
+                        className="border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
                       >
                         Enable
                       </Button>
@@ -3986,6 +4145,7 @@ export default function AdminDashboardClient({
                         disabled={isPending}
                         variant="ghost"
                         size="sm"
+                        className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
                       >
                         Disable
                       </Button>
@@ -3997,99 +4157,29 @@ export default function AdminDashboardClient({
           )}
         </div>
 
-        <div className="mt-4 rounded-xl border border-neutral-200/60 bg-white p-4">
+        <div className="mt-4 rounded-xl border border-[#f2dfcf] bg-white p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-neutral-950">Global Service Rollout</p>
-              <p className="mt-1 text-xs text-neutral-600">Deploy a service configuration across selected providers or the full network.</p>
+              <p className="text-sm font-semibold text-ink">Global Service Rollout</p>
+              <p className="mt-1 text-xs text-[#6b6b6b]">Deploy a service configuration across selected providers or the full network.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-2 py-0.5 text-[11px] font-medium text-ink">
+                {rolloutTargetScopeLabel}
+              </span>
+              <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-2 py-0.5 text-[11px] font-medium text-ink">
                 Service Types: {availableServiceTypes.length}
               </span>
-              <span className="rounded-full border border-neutral-200/80 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700">
+              <span className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-2 py-0.5 text-[11px] font-medium text-ink">
                 Saves as Active
               </span>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-lg border border-neutral-200/70 bg-neutral-50/50 p-3">
-            <p className="text-xs font-semibold text-neutral-900">Rollout Configuration</p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              <div>
-                <label className="text-sm font-medium text-neutral-700 block mb-2">Available Service</label>
-                <select
-                  value={globalServiceDraft.service_type}
-                  onChange={(event) => setGlobalServiceDraftField('service_type', event.target.value)}
-                  className="input-field w-full"
-                >
-                  <option value="">Select a service</option>
-                  {availableServiceTypes.map((serviceType) => (
-                    <option key={serviceType} value={serviceType}>
-                      {serviceType}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <Input
-                label="Base Price"
-                value={globalServiceDraft.base_price}
-                onChange={(event) => setGlobalServiceDraftField('base_price', event.target.value)}
-                placeholder="0"
-              />
-              <Input
-                label="Surge Price"
-                value={globalServiceDraft.surge_price}
-                onChange={(event) => setGlobalServiceDraftField('surge_price', event.target.value)}
-                placeholder="Optional"
-              />
-              <Input
-                label="Commission %"
-                value={globalServiceDraft.commission_percentage}
-                onChange={(event) => setGlobalServiceDraftField('commission_percentage', event.target.value)}
-                placeholder="Optional"
-              />
-              <Input
-                label="Duration (minutes)"
-                value={globalServiceDraft.service_duration_minutes}
-                onChange={(event) => setGlobalServiceDraftField('service_duration_minutes', event.target.value)}
-                placeholder="e.g. 60"
-              />
-            </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <Input
-                label="Service Pincodes"
-                value={globalServiceDraft.service_pincodes}
-                onChange={(event) => setGlobalServiceDraftField('service_pincodes', event.target.value)}
-                placeholder="Indian pincodes (comma separated)"
-              />
-              <Input
-                label="Target Provider IDs"
-                value={globalServiceDraft.provider_ids}
-                onChange={(event) => setGlobalServiceDraftField('provider_ids', event.target.value)}
-                placeholder="Optional, comma separated"
-              />
-            </div>
-            <label className={cn('mt-2', adminToggleFieldClass)}>
-              <input
-                type="checkbox"
-                checked={globalServiceDraft.overwrite_existing}
-                onChange={(event) => setGlobalServiceDraftField('overwrite_existing', event.target.checked)}
-              />
-              Overwrite existing service config for targeted providers
-            </label>
-
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs text-neutral-600">If no provider IDs are entered, rollout applies to all providers.</p>
-              <Button
+              <button
                 type="button"
-                onClick={rolloutGlobalService}
-                disabled={isPending}
-                variant="secondary"
-                size="sm"
+                onClick={() => setShowRolloutConfiguration(true)}
+                className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:bg-[#ffefe0]"
               >
-                Rollout Service Globally
-              </Button>
+                Edit Rollout
+              </button>
             </div>
           </div>
         </div>
@@ -4097,30 +4187,44 @@ export default function AdminDashboardClient({
       ) : null}
 
       {isServicesView ? (
-      <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-semibold text-neutral-950">Offers & Discounts</h2>
-        <p className="mt-1 text-xs text-neutral-600">Create, manage, and track promotional offers and discount codes.</p>
+      <section className="rounded-3xl border border-[#f2dfcf] bg-gradient-to-b from-[#fffdfb] to-white p-6 shadow-soft-md">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Offers & Discounts</h2>
+            <p className="mt-1 text-xs text-[#6b6b6b]">Create, manage, and track promotional offers and discount codes.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              resetDiscountDraft();
+              setShowDiscountEditor(true);
+            }}
+            className="rounded-full bg-coral px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448]"
+          >
+            Create Discount
+          </button>
+        </div>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-4">
-          <div className="rounded-xl border border-neutral-200/60 p-3 text-xs">
-            <p className="text-neutral-600">Total Discounts</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-950">{discountAnalytics.total_discounts}</p>
+          <div className="rounded-xl border border-[#f2dfcf] bg-white p-3 text-xs">
+            <p className="text-[#6b6b6b]">Total Discounts</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{discountAnalytics.total_discounts}</p>
           </div>
-          <div className="rounded-xl border border-neutral-200/60 p-3 text-xs">
-            <p className="text-neutral-600">Active Discounts</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-950">{discountAnalytics.total_active_discounts}</p>
+          <div className="rounded-xl border border-[#f2dfcf] bg-white p-3 text-xs">
+            <p className="text-[#6b6b6b]">Active Discounts</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{discountAnalytics.total_active_discounts}</p>
           </div>
-          <div className="rounded-xl border border-neutral-200/60 p-3 text-xs">
-            <p className="text-neutral-600">Total Redemptions</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-950">{discountAnalytics.total_redemptions}</p>
+          <div className="rounded-xl border border-[#f2dfcf] bg-white p-3 text-xs">
+            <p className="text-[#6b6b6b]">Total Redemptions</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{discountAnalytics.total_redemptions}</p>
           </div>
-          <div className="rounded-xl border border-neutral-200/60 p-3 text-xs">
-            <p className="text-neutral-600">Booking Redemption Rate</p>
-            <p className="mt-1 text-sm font-semibold text-neutral-950">{discountAnalytics.booking_redemption_rate}%</p>
+          <div className="rounded-xl border border-[#f2dfcf] bg-white p-3 text-xs">
+            <p className="text-[#6b6b6b]">Booking Redemption Rate</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{discountAnalytics.booking_redemption_rate}%</p>
           </div>
         </div>
-        <div className="mt-2 rounded-xl border border-neutral-200/60 p-3 text-xs text-neutral-600">
-          Total discount amount issued: <span className="font-semibold text-neutral-950">₹{discountAnalytics.total_discount_amount}</span>
+        <div className="mt-2 rounded-xl border border-[#f2dfcf] bg-[#fff7f0] p-3 text-xs text-[#6b6b6b]">
+          Total discount amount issued: <span className="font-semibold text-ink">₹{discountAnalytics.total_discount_amount}</span>
           {discountAnalytics.top_discounts.length > 0 ? (
             <span>
               {' '}
@@ -4132,9 +4236,235 @@ export default function AdminDashboardClient({
           ) : null}
         </div>
 
-        <div className="mt-4 rounded-xl border border-neutral-200/60 p-3">
-          <p className="text-xs font-semibold text-neutral-950">Create / Update Discount</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <div className="mt-4 rounded-xl border border-[#f2dfcf] bg-white p-3">
+          <p className="text-xs font-semibold text-ink">Existing Discounts</p>
+          {discounts.length === 0 ? (
+            <p className="mt-2 text-xs text-[#6b6b6b]">No discounts configured yet.</p>
+          ) : (
+            <ul className="mt-2 grid gap-2">
+              {discounts.map((discount) => (
+                <li key={discount.id} className="rounded-lg border border-[#f2dfcf] p-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium text-ink">
+                      {discount.code} • {discount.title} • {discount.discount_type} {discount.discount_value}
+                    </p>
+                    <span
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-[11px] font-medium',
+                        discount.is_active
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-red-200 bg-red-50 text-red-700',
+                      )}
+                    >
+                      {discount.is_active ? 'Active' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-[#6b6b6b]">
+                    Valid: {new Date(discount.valid_from).toLocaleString()} -{' '}
+                    {discount.valid_until ? new Date(discount.valid_until).toLocaleString() : 'No expiry'}
+                  </p>
+                  {discount.first_booking_only ? (
+                    <p className="mt-1 text-[11px] font-medium text-ink">Applies to first booking only</p>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadDiscountInDraft(discount)}
+                      disabled={isPending}
+                      className="rounded-full border border-[#f2dfcf] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:bg-[#fff7f0] disabled:opacity-60"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleDiscount(discount.id, !discount.is_active)}
+                      disabled={isPending}
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-60',
+                        discount.is_active
+                          ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                          : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100',
+                      )}
+                    >
+                      {discount.is_active ? 'Disable' : 'Enable'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeDiscount(discount.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-[#f2dfcf] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:bg-[#fff7f0] disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+      ) : null}
+
+      {!canManageUserAccess && isAccessView ? (
+        <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
+          <p className="text-sm text-neutral-600">Admin access controls are available only to admin role users.</p>
+        </section>
+      ) : null}
+      </div>
+
+      <Modal
+        isOpen={showRolloutConfiguration}
+        onClose={() => {
+          setShowRolloutConfiguration(false);
+        }}
+        size="xl"
+        title="Edit Global Rollout"
+        description="Configure and deploy service pricing settings across providers."
+      >
+        <div className="space-y-4">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-ink">Available Service</label>
+              <select
+                value={globalServiceDraft.service_type}
+                onChange={(event) => setGlobalServiceDraftField('service_type', event.target.value)}
+                className="input-field w-full"
+              >
+                <option value="">Select a service</option>
+                {availableServiceTypes.map((serviceType) => (
+                  <option key={serviceType} value={serviceType}>
+                    {serviceType}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Input
+              label="Base Price"
+              value={globalServiceDraft.base_price}
+              onChange={(event) => setGlobalServiceDraftField('base_price', event.target.value)}
+              placeholder="0"
+            />
+            <Input
+              label="Surge Price"
+              value={globalServiceDraft.surge_price}
+              onChange={(event) => setGlobalServiceDraftField('surge_price', event.target.value)}
+              placeholder="Optional"
+            />
+            <Input
+              label="Commission %"
+              value={globalServiceDraft.commission_percentage}
+              onChange={(event) => setGlobalServiceDraftField('commission_percentage', event.target.value)}
+              placeholder="Optional"
+            />
+            <Input
+              label="Duration (minutes)"
+              value={globalServiceDraft.service_duration_minutes}
+              onChange={(event) => setGlobalServiceDraftField('service_duration_minutes', event.target.value)}
+              placeholder="e.g. 60"
+            />
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input
+              label="Service Pincodes"
+              value={globalServiceDraft.service_pincodes}
+              onChange={(event) => setGlobalServiceDraftField('service_pincodes', event.target.value)}
+              placeholder="Indian pincodes (comma separated)"
+            />
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-ink">Target Provider Types</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGlobalServiceDraftField('provider_types', [])}
+                  className="rounded-full border border-[#f2dfcf] bg-white px-3 py-1.5 text-[11px] font-semibold text-ink transition hover:bg-[#fff7f0]"
+                >
+                  Target All
+                </button>
+              </div>
+
+              <div className="grid max-h-36 gap-2 overflow-y-auto rounded-xl border border-[#f2dfcf] bg-white p-2 sm:grid-cols-2">
+                {rolloutProviderTypeOptions.map((providerTypeOption) => {
+                  const checked = globalServiceDraft.provider_types.includes(providerTypeOption.value);
+                  return (
+                    <label
+                      key={providerTypeOption.value}
+                      className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-ink hover:bg-[#fff7f0]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => toggleGlobalRolloutProviderType(providerTypeOption.value, event.target.checked)}
+                      />
+                      <span>
+                        {providerTypeOption.value.replaceAll('_', ' ')} ({providerTypeOption.count})
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {rolloutProviderTypeOptions.length === 0 ? (
+                <p className="text-[11px] text-[#6b6b6b]">
+                  No onboarded provider types found yet. Rollout will apply to all approved active providers.
+                </p>
+              ) : null}
+
+              <p className="text-[11px] text-[#6b6b6b]">
+                {globalServiceDraft.provider_types.length > 0
+                  ? `Selected: ${globalServiceDraft.provider_types.map((type) => type.replaceAll('_', ' ')).join(', ')}`
+                  : 'No type selected: rollout applies to all approved active providers.'}
+              </p>
+              <p className="text-[11px] font-medium text-ink">{rolloutTargetScopeLabel}</p>
+            </div>
+          </div>
+
+          <label className={cn('mt-2', adminToggleFieldClass)}>
+            <input
+              type="checkbox"
+              checked={globalServiceDraft.overwrite_existing}
+              onChange={(event) => setGlobalServiceDraftField('overwrite_existing', event.target.checked)}
+            />
+            Overwrite existing service config for targeted providers
+          </label>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-[#6b6b6b]">If no provider types are selected, rollout applies to all approved active providers.</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRolloutConfiguration(false);
+                }}
+                className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink transition hover:bg-[#ffefe0]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={rolloutGlobalService}
+                disabled={isPending}
+                className="rounded-full bg-coral px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448] disabled:opacity-60"
+              >
+                Rollout Service Globally
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showDiscountEditor}
+        onClose={() => {
+          resetDiscountDraft();
+          setShowDiscountEditor(false);
+        }}
+        size="xl"
+        title={discountDraft.id ? 'Edit Discount' : 'Create Discount'}
+        description="Create, update, and schedule promotional discount codes."
+      >
+        <div className="space-y-4">
+          <div className="grid gap-2 sm:grid-cols-3">
             <input
               value={discountDraft.code}
               onChange={(event) => setDiscountDraftField('code', event.target.value.toUpperCase())}
@@ -4212,112 +4542,54 @@ export default function AdminDashboardClient({
               />
               First Booking Only
             </label>
-            <label className={adminToggleFieldClass}>
+            <label
+              className={cn(
+                adminToggleFieldClass,
+                discountDraft.is_active
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : 'border-red-200 bg-red-50 text-red-700',
+              )}
+            >
               <input
                 type="checkbox"
                 checked={discountDraft.is_active}
                 onChange={(event) => setDiscountDraftField('is_active', event.target.checked)}
               />
-              Discount Active
+              {discountDraft.is_active ? 'Discount Active' : 'Discount Inactive'}
             </label>
           </div>
+
           <textarea
             value={discountDraft.description}
             onChange={(event) => setDiscountDraftField('description', event.target.value)}
             placeholder="Description"
             rows={2}
-            className={cn('mt-2 w-full', adminRawFieldClass)}
+            className={cn('w-full', adminRawFieldClass)}
           />
+
           <div className="mt-2 flex flex-wrap gap-2">
-            <Button
+            <button
+              type="button"
+              onClick={() => {
+                resetDiscountDraft();
+                setShowDiscountEditor(false);
+              }}
+              disabled={isPending}
+              className="rounded-full border border-[#f2dfcf] bg-[#fff7f0] px-4 py-2 text-xs font-semibold text-ink transition hover:bg-[#ffefe0] disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
               type="button"
               onClick={saveDiscount}
               disabled={isPending}
-              variant="secondary"
-              size="sm"
+              className="rounded-full bg-coral px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#cf8448] disabled:opacity-60"
             >
               {discountDraft.id ? 'Update Discount' : 'Create Discount'}
-            </Button>
-            {discountDraft.id ? (
-              <Button
-                type="button"
-                onClick={resetDiscountDraft}
-                disabled={isPending}
-                variant="ghost"
-                size="sm"
-              >
-                Clear Edit
-              </Button>
-            ) : null}
+            </button>
           </div>
         </div>
-
-        <div className="mt-4 rounded-xl border border-neutral-200/60 p-3">
-          <p className="text-xs font-semibold text-neutral-950">Existing Discounts</p>
-          {discounts.length === 0 ? (
-            <p className="mt-2 text-xs text-neutral-600">No discounts configured yet.</p>
-          ) : (
-            <ul className="mt-2 grid gap-2">
-              {discounts.map((discount) => (
-                <li key={discount.id} className="rounded-lg border border-neutral-200/60 p-2 text-xs">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="font-medium text-neutral-950">
-                      {discount.code} • {discount.title} • {discount.discount_type} {discount.discount_value}
-                    </p>
-                    <span className="rounded-full border border-neutral-200/60 bg-neutral-50 px-2.5 py-1 text-[11px] font-medium text-neutral-950">
-                      {discount.is_active ? 'Active' : 'Disabled'}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-neutral-600">
-                    Valid: {new Date(discount.valid_from).toLocaleString()} -{' '}
-                    {discount.valid_until ? new Date(discount.valid_until).toLocaleString() : 'No expiry'}
-                  </p>
-                  {discount.first_booking_only ? (
-                    <p className="mt-1 text-[11px] font-medium text-neutral-950">Applies to first booking only</p>
-                  ) : null}
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => loadDiscountInDraft(discount)}
-                      disabled={isPending}
-                      variant="secondary"
-                      size="sm"
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => toggleDiscount(discount.id, !discount.is_active)}
-                      disabled={isPending}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      {discount.is_active ? 'Disable' : 'Enable'}
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => removeDiscount(discount.id)}
-                      disabled={isPending}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-      ) : null}
-
-      {!canManageUserAccess && isAccessView ? (
-        <section className="rounded-2xl border border-neutral-200/60 bg-white p-6 shadow-sm">
-          <p className="text-sm text-neutral-600">Admin access controls are available only to admin role users.</p>
-        </section>
-      ) : null}
-      </div>
+      </Modal>
 
       {/* Provider Onboarding Modal */}
       <ProviderOnboardingModal
