@@ -15,8 +15,8 @@ export default function BirthdayBannerSection() {
             aria-label="Book pet birthday service"
           >
             <Image
-              src="/Birthday/book-a-birthday-banner-2.png"
-              alt="Dog being groomed at home by a professional groomer in Electronic City, Bangalore"
+              src="/Birthday/birthday.pet.dofurs.png"
+              alt="Dofurs pet birthday booking banner"
               width={1200}
               height={540}
               sizes="(max-width: 768px) 800px, 1200px"

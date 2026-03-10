@@ -49,7 +49,7 @@ export default function CTASection() {
               <div className="relative mx-auto w-full max-w-xl">
                 <div className="relative aspect-[4/3] overflow-hidden rounded-[20px] shadow-xl">
                   <Image
-                    src="/Birthday/book-a-service.png"
+                    src="/Birthday/dofurs.booking.png"
                     alt="Dog being groomed at home by a professional groomer in Electronic City, Bangalore"
                     fill
                     sizes="(max-width: 768px) 800px, 1200px"
