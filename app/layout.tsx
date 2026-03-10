@@ -7,12 +7,12 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://dofurs.in'),
   title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
   description:
-    "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
+    'Dofurs brings certified pet groomers to your doorstep in Bangalore. Transparent pricing, same-day booking, and 100% hygiene-first grooming for dogs & cats. Trusted by 1,000+ pet parents.',
   keywords: ['dog grooming electronic city', 'dog grooming at home', 'cat grooming', 'pet grooming bangalore', 'Dofurs'],
   openGraph: {
     title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
     description:
-      "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
+      'Dofurs brings certified pet groomers to your doorstep in Bangalore. Transparent pricing, same-day booking, and 100% hygiene-first grooming for dogs & cats. Trusted by 1,000+ pet parents.',
     type: 'website',
     locale: 'en_US',
     images: [
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
     description:
-      "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
+      'Dofurs brings certified pet groomers to your doorstep in Bangalore. Transparent pricing, same-day booking, and 100% hygiene-first grooming for dogs & cats. Trusted by 1,000+ pet parents.',
     images: ['/Birthday/book-a-service.png'],
   },
 };
