@@ -18,7 +18,7 @@ export default function Footer() {
       <div className={`${theme.layout.container} grid gap-12 md:grid-cols-2 lg:grid-cols-4`}>
         <div className="lg:col-span-1">
           <BrandMark compact />
-          <p className="mt-4 text-xs text-ink/60">© {new Date().getFullYear()} Dofurs. All rights reserved.</p>
+          <p className="mt-4 text-xs text-ink/60">© 2026 Dofurs - Home Pet Grooming, Electronic City, Bangalore.</p>
         </div>
 
         <div>

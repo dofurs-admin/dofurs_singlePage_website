@@ -11,6 +11,7 @@ export default function HeroSection() {
         loop
         playsInline
         preload="metadata"
+        aria-label="Dog being groomed at home by a professional groomer in Electronic City, Bangalore"
       >
         <source src="/Birthday/dofurs.cover.video.mp4" type="video/mp4" />
       </video>
@@ -18,16 +19,16 @@ export default function HeroSection() {
       <div className={`relative ${theme.layout.container} flex min-h-[calc(100vh-6rem)] items-center`}>
         <FadeInSection className="max-w-2xl rounded-3xl bg-white/66 p-8 shadow-[0_40px_80px_rgba(0,0,0,0.08)] backdrop-blur-md md:p-10">
           <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-coral">Dofurs</p>
-          <h1 className="text-4xl font-bold tracking-[-0.02em] text-ink md:text-6xl md:leading-[1.03]">Premium Pet Services, Simplified</h1>
+          <h1 className="text-4xl font-bold tracking-[-0.02em] text-ink md:text-6xl md:leading-[1.03]">Dog & Cat Grooming That Comes to You</h1>
           <p className="mt-5 text-lg text-ink/80 md:text-xl">
-            Connecting pet parents with trusted pet care professionals.
+            Your pet is family. Finding someone who treats them that way should not be hard.
           </p>
           <a
             href="#book"
             className={`mt-8 inline-flex rounded-full px-8 py-3.5 text-sm font-semibold shadow-[0_8px_24px_rgba(227,154,93,0.35)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:shadow-[0_14px_30px_rgba(227,154,93,0.42)] ${theme.colors.primary} ${theme.colors.primaryHover}`}
-            aria-label="Book a Service"
+            aria-label="Book a Home Grooming Session"
           >
-            Book a Service
+            Book a Home Grooming Session
           </a>
         </FadeInSection>
       </div>

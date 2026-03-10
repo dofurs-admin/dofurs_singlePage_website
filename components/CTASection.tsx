@@ -18,29 +18,30 @@ export default function CTASection() {
               <div className="text-center lg:text-left">
                 <div className="mb-4 inline-flex items-center justify-center gap-2 text-[#e89a5e] lg:justify-start">
                   <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-                  <span className="text-sm font-medium">Premium Care Promise</span>
+                  <span className="text-sm font-medium">Trusted Local Groomers</span>
                 </div>
 
                 <h2 className="text-4xl font-bold tracking-tight text-ink sm:text-[42px] lg:text-5xl">
-                  Book Premium Pet Care in Minutes
+                  Book a Home Grooming Session in Electronic City
                 </h2>
 
-                <p className="mx-auto mt-4 max-w-xl whitespace-pre-line text-base text-[#6b6b6b] sm:text-lg lg:mx-0">
-                  {'Certified groomers. Doorstep service.\n100% hygiene-first protocols.'}
+                <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-[#6b6b6b] sm:text-lg lg:mx-0">
+                  Over 100 pet parents around here have already made the switch. Their dogs and cats come out cleaner,
+                  calmer and happier - and not a single one had to leave home for it. Yours can be next.
                 </p>
 
                 <div className="mt-8 flex flex-col items-center gap-4 lg:items-start">
                   <Link
                     href={links.booking}
                     className="inline-flex w-full items-center justify-center rounded-full bg-[linear-gradient(90deg,_#f4a261_0%,_#e76f51_100%)] px-8 py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(227,154,93,0.35)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:brightness-95 hover:shadow-[0_14px_30px_rgba(227,154,93,0.42)] sm:w-auto"
-                    aria-label="Book Now"
+                    aria-label="Book a Home Grooming Session"
                   >
-                    Book Now
+                    Book a Home Grooming Session {'->'}
                   </Link>
 
                   <p className="inline-flex items-center justify-center gap-2 text-sm text-[#7a7a7a] lg:justify-start">
                     <Star className="h-4 w-4 fill-[#d4a73b] text-[#d4a73b]" aria-hidden="true" />
-                    Trusted by 1,000+ Pet Parents in Bangalore
+                    Trusted by 100+ Pet Parents in Electronic City
                   </p>
                 </div>
               </div>
@@ -49,9 +50,9 @@ export default function CTASection() {
                 <div className="relative aspect-[4/3] overflow-hidden rounded-[20px] shadow-xl">
                   <Image
                     src="/Birthday/book-a-service.png"
-                    alt="Professional pet grooming service"
+                    alt="Dog being groomed at home by a professional groomer in Electronic City, Bangalore"
                     fill
-                    sizes="(max-width: 1024px) 100vw, 50vw"
+                    sizes="(max-width: 768px) 800px, 1200px"
                     className="object-cover"
                     priority
                   />

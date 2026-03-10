@@ -4,25 +4,38 @@ import './globals.css';
 import WhatsAppFloatingButton from '@/components/WhatsAppFloatingButton';
 
 export const metadata: Metadata = {
-  title: 'Dofurs | Premium Pet Services, Simplified',
-  description: 'Dofurs connects pet owners with verified pet care professionals for seamless bookings and trusted service.',
-  keywords: ['pet services', 'pet sitting', 'vet visits', 'pet grooming', 'Dofurs'],
+  metadataBase: new URL('https://dofurs.in'),
+  title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
+  description:
+    "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
+  keywords: ['dog grooming electronic city', 'dog grooming at home', 'cat grooming', 'pet grooming bangalore', 'Dofurs'],
   openGraph: {
-    title: 'Dofurs | Premium Pet Services, Simplified',
-    description: 'Connecting pet parents with trusted pet care professionals.',
+    title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
+    description:
+      "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
     type: 'website',
     locale: 'en_US',
+    images: [
+      {
+        url: '/Birthday/book-a-service.png',
+        width: 1200,
+        height: 800,
+        alt: 'Dog being groomed at home by a professional groomer in Electronic City, Bangalore',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Dofurs | Premium Pet Services, Simplified',
-    description: 'Connecting pet parents with trusted pet care professionals.',
+    title: 'Dofurs | Dog & Cat Grooming at Home - Electronic City, Bangalore',
+    description:
+      "Tired of dragging your pet to a salon? Dofurs brings professional grooming home - trusted groomers, safe products, prices that don't sting.",
+    images: ['/Birthday/book-a-service.png'],
   },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <Script src="https://www.googletagmanager.com/gtag/js?id=G-7QBYYFJYHH" strategy="afterInteractive" />
         <Script id="google-analytics" strategy="afterInteractive">
@@ -43,7 +56,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           `}
         </Script>
       </head>
-      <body>
+      <body suppressHydrationWarning>
         {children}
         <WhatsAppFloatingButton />
       </body>

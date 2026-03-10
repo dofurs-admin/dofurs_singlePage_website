@@ -16,9 +16,10 @@ export default function BirthdayBannerSection() {
           >
             <Image
               src="/Birthday/book-a-birthday-banner-2.png"
-              alt="Book a pet birthday celebration banner"
-              width={2000}
-              height={900}
+              alt="Dog being groomed at home by a professional groomer in Electronic City, Bangalore"
+              width={1200}
+              height={540}
+              sizes="(max-width: 768px) 800px, 1200px"
               className="h-auto w-full object-cover brightness-95 saturate-90"
               priority
             />

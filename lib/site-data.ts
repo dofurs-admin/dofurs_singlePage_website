@@ -29,41 +29,44 @@ export const footerPolicyLinks = [
 
 export const services = [
   {
-    title: 'Grooming',
-    description: 'Professional grooming sessions that keep coats healthy, clean, and camera-ready.',
+    title: 'Dog & Cat Grooming at Home',
+    description:
+      'Full bath, blow-dry, nail trim and ear clean - done where your pet is most comfortable. We bring everything, including premium, breed-safe products.',
     icon: Bath,
   },
   {
-    title: 'Vet Visits',
-    description: 'Trusted veterinary support for preventive checkups, wellness plans, and urgent needs.',
+    title: 'Vet Visits - Coming Soon',
+    description: "We're bringing vet care to your doorstep next. Drop your details and we'll let you know the moment it goes live.",
     icon: Stethoscope,
   },
   {
-    title: 'Pet Sitting',
-    description: 'Reliable sitters who give your pet personalized care while you are away.',
+    title: 'Pet Sitting - Coming Soon',
+    description: 'Verified, caring pet sitters - coming soon to South Bangalore. Register your interest and be first in line.',
     icon: HeartHandshake,
   },
   {
-    title: 'Training',
-    description: 'Positive reinforcement training to improve behavior and strengthen your bond.',
+    title: 'Pet Training - Coming Soon',
+    description: 'Positive, reward-based training that actually works - and it will come to you. Get on the waitlist.',
     icon: Dog,
   },
 ] as const;
 
 export const steps = [
   {
-    title: 'Choose Service',
-    description: 'Compare verified providers and pick the right care for your pet.',
+    title: 'Tell Us About Your Pet',
+    description:
+      "Share your pet's breed and size, pick a grooming package that fits, and see the price before you commit. No hidden costs.",
     icon: PawPrint,
   },
   {
-    title: 'Book Instantly',
-    description: 'Book in minutes using a smooth booking workflow and transparent details.',
+    title: 'Pick a Time That Works',
+    description: "Choose a slot, confirm your address, and you're done. We come to your home - no dropping off, no waiting in queues.",
     icon: CalendarCheck2,
   },
   {
-    title: 'Relax & Enjoy',
-    description: 'Get updates and peace of mind while your pet receives excellent care.',
+    title: 'We Handle the Rest',
+    description:
+      "Your groomer arrives on time with everything they need. Watch your pet get pampered, or step away and trust us to handle it. Pay only once you're satisfied.",
     icon: Smile,
   },
 ] as const;
@@ -96,18 +99,18 @@ export const formEmbeds = {
 
 export const reviews = [
   {
-    quote: 'Booked grooming and sitting in one flow. Clear updates and a calm, happy pup at pickup.',
-    name: 'Rajesh Patra',
-    role: 'Pet Parent',
+    quote: 'Bruno came back looking fresh and smelling great. The groomer was so patient with him - he is usually a nightmare with strangers.',
+    name: 'Riya M.',
+    role: 'Golden Retriever parent, Electronic City',
   },
   {
-    quote: 'The provider was punctual, gentle, and professional. The booking experience felt truly seamless.',
-    name: 'Anupam P',
-    role: 'Dog Owner',
+    quote: 'Showed up exactly when they said they would. My dog was relaxed through the whole thing, which honestly surprised me.',
+    name: 'Arjun K.',
+    role: 'Dog parent, Phase 2',
   },
   {
-    quote: 'Fast confirmation, transparent details, and excellent care quality. Dofurs made life easier.',
-    name: 'M Saiba',
-    role: 'Cat Parent',
+    quote: 'My cat hates being touched by anyone outside the family. Somehow the groomer had her purring by the end of it. That is not easy to do.',
+    name: 'Sneha P.',
+    role: 'Cat parent, Neeladri Nagar',
   },
 ] as const;
